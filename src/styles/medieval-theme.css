@@ -1,0 +1,298 @@
+/**
+ * Tema medieval unificado: HUD, toasts, prompts e painéis de diálogo.
+ * Importado em main.js — use var(--game-*) nos componentes.
+ */
+:root {
+  --game-bg-deep: #1a0f07;
+  --game-bg-panel: #2c1810;
+  --game-bg-panel-light: #3c2611;
+  --game-parchment: #e8d4b8;
+  --game-parchment-mid: #d4b896;
+  --game-parchment-dark: #b8955e;
+  --game-parchment-ink: #2c1810;
+  --game-ink: #2c1810;
+  --game-cream: #fff3c4;
+  --game-cream-soft: #f0e4c8;
+  --game-gold: #c9a227;
+  --game-gold-bright: #f4e4b0;
+  --game-border-warm: #6b4423;
+  --game-border-gold: #8b6914;
+  --game-wood-dark: #5c2c1d;
+  --game-honey: #e0a867;
+  --game-honey-light: #ffcb8e;
+  --game-honey-shadow: #d17844;
+  --game-accent-mystic: #5c4a6e;
+  --game-accent-mystic-deep: #3a2a4a;
+  --game-life-start: #e04545;
+  --game-life-end: #6b1515;
+  --game-stamina-start: #7bcc44;
+  --game-stamina-end: #2d5016;
+  --game-bar-bg: rgba(26, 15, 7, 0.94);
+  --game-bar-border: #5c4033;
+  --game-bar-empty: rgba(0, 0, 0, 0.35);
+  --game-ui-font: 'MedievalSharp', 'Times New Roman', serif;
+  --game-shadow-out: 4px 6px 18px rgba(0, 0, 0, 0.55);
+  --game-shadow-inset: inset 2px 2px 8px rgba(0, 0, 0, 0.35),
+    inset -1px -1px 6px rgba(255, 230, 200, 0.06);
+  --game-shadow-modal: 0 10px 36px rgba(0, 0, 0, 0.65),
+    var(--game-shadow-inset);
+  --game-overlay-scrim: rgba(18, 10, 4, 0.78);
+  --game-danger: #b22222;
+  --game-danger-dark: #7e1a1a;
+}
+
+/* Faixa “pressione tecla” — combine com .enter-prompt nos layouts */
+.game-ui-enter-prompt {
+  background: linear-gradient(
+    165deg,
+    var(--game-parchment-mid) 0%,
+    var(--game-parchment-dark) 55%,
+    #a67c45 100%
+  );
+  border: 3px solid var(--game-border-gold);
+  border-radius: 6px;
+  padding: 10px 18px;
+  box-shadow: var(--game-shadow-modal);
+  color: var(--game-parchment-ink);
+  font-family: var(--game-ui-font);
+  font-weight: 600;
+  font-size: 18px;
+  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.35);
+}
+
+.game-ui-enter-prompt .key {
+  display: inline-block;
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--game-wood-dark);
+  padding: 2px 10px;
+  margin: 0 4px;
+  border: 3px solid var(--game-border-gold);
+  border-radius: 4px;
+  background: rgba(255, 248, 220, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* Toast central (recompensa HUD) */
+.game-ui-toast--reward {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 14px 28px;
+  max-width: min(90vw, 520px);
+  text-align: center;
+  font-family: var(--game-ui-font);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--game-parchment-ink);
+  background: linear-gradient(
+    165deg,
+    var(--game-parchment) 0%,
+    var(--game-parchment-mid) 50%,
+    var(--game-parchment-dark) 100%
+  );
+  border: 4px solid var(--game-border-gold);
+  border-radius: 8px;
+  box-shadow: var(--game-shadow-modal);
+  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.5);
+  z-index: 25;
+}
+
+/* Toast inferior (inventário / avisos rápidos) */
+.game-ui-toast--banner {
+  background: linear-gradient(
+    160deg,
+    var(--game-bg-panel-light) 0%,
+    var(--game-bg-deep) 100%
+  );
+  border: 3px dashed var(--game-gold-bright);
+  border-radius: 8px;
+  color: var(--game-cream);
+  font-family: var(--game-ui-font);
+  font-weight: 700;
+  text-shadow: 1px 1px 0 var(--game-bg-deep);
+  box-shadow: var(--game-shadow-out);
+}
+
+/* Confirmação “salvo” (opções) */
+.game-ui-toast--saved {
+  background: linear-gradient(
+    165deg,
+    var(--game-parchment) 0%,
+    var(--game-parchment-mid) 100%
+  );
+  border: 3px solid var(--game-border-gold);
+  color: var(--game-parchment-ink);
+  font-family: var(--game-ui-font);
+  font-weight: 700;
+  box-shadow: var(--game-shadow-out);
+}
+
+/* Botões estilo pergaminho / madeira (painéis de jogo) */
+.game-ui-btn {
+  font-family: var(--game-ui-font);
+  background-color: var(--game-honey);
+  color: var(--game-wood-dark);
+  border: 4px solid var(--game-wood-dark);
+  padding: 10px 20px;
+  cursor: pointer;
+  box-shadow: inset -6px -6px var(--game-honey-shadow),
+    inset 6px 6px var(--game-honey-light);
+  font-weight: bold;
+  transition: transform 0.1s ease, box-shadow 0.1s ease, background-color 0.2s,
+    filter 0.15s;
+}
+
+.game-ui-btn:hover:not(:disabled) {
+  background-color: #f4b76a;
+  color: #3e1e14;
+  box-shadow: inset -6px -6px #c96a32, inset 6px 6px #ffd9a1;
+}
+
+.game-ui-btn:active:not(:disabled) {
+  transform: translateY(2px);
+}
+
+.game-ui-btn--danger {
+  background-color: var(--game-danger);
+  color: #fff2cc;
+  border-color: var(--game-danger-dark);
+  box-shadow: inset -6px -6px #8b0000, inset 6px 6px #ff5050;
+}
+
+.game-ui-btn--danger:hover:not(:disabled) {
+  background-color: #c92828;
+  filter: brightness(1.05);
+}
+
+/* HUD — moldura pergaminho ao redor de vida/energia */
+.game-ui-hud-root {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
+}
+
+.game-ui-hud-panel {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: linear-gradient(
+    155deg,
+    rgba(44, 24, 16, 0.92) 0%,
+    rgba(26, 15, 7, 0.88) 50%,
+    rgba(18, 10, 4, 0.92) 100%
+  );
+  border: 4px solid var(--game-border-gold);
+  box-shadow: var(--game-shadow-modal),
+    inset 0 1px 0 rgba(255, 230, 200, 0.08);
+}
+
+/* Modais globais (substituem alert/confirm) */
+.game-ui-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--game-overlay-scrim);
+  backdrop-filter: blur(3px);
+  animation: game-ui-fade-in 0.22s ease-out;
+}
+
+@keyframes game-ui-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.game-ui-modal {
+  position: relative;
+  max-width: min(92vw, 440px);
+  padding: 28px 24px 22px;
+  font-family: var(--game-ui-font);
+  color: var(--game-parchment-ink);
+  background: linear-gradient(
+    165deg,
+    var(--game-parchment) 0%,
+    var(--game-parchment-mid) 45%,
+    var(--game-parchment-dark) 100%
+  );
+  border: 5px solid var(--game-border-gold);
+  border-radius: 12px;
+  box-shadow: var(--game-shadow-modal);
+  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.4);
+  animation: game-ui-modal-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes game-ui-modal-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.game-ui-modal__ornament {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--game-gold) 20%,
+    var(--game-gold-bright) 50%,
+    var(--game-gold) 80%,
+    transparent
+  );
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.game-ui-modal__ornament--top {
+  top: 8px;
+}
+
+.game-ui-modal__ornament--bottom {
+  bottom: 8px;
+}
+
+.game-ui-modal__text {
+  margin: 12px 0 20px;
+  font-size: clamp(17px, 2.8vw, 21px);
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.game-ui-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.game-ui-modal__primary {
+  min-width: 120px;
+  font-size: 18px;
+}
+
+.game-ui-modal__secondary {
+  min-width: 100px;
+  font-size: 18px;
+  background: linear-gradient(to bottom, #c4a574, var(--game-border-warm));
+  color: var(--game-parchment-ink);
+  border-color: var(--game-border-warm);
+  box-shadow: inset -4px -4px rgba(0, 0, 0, 0.2), inset 4px 4px rgba(255, 248, 220, 0.35);
+}
+
+.game-ui-modal__secondary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
