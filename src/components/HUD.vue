@@ -1,63 +1,94 @@
 <template>
   <div class="main-hud game-ui-hud-root">
-    <!-- Painel com vida e energia -->
-    <div class="panel-frame game-ui-hud-panel">
-      <!-- Vida -->
-      <div class="stat vida">
-        <div class="icon-container">
-          <img src="/icons/life-icon.png" alt="Vida" class="icon" />
-          <span class="lives-count">{{ gameState.player.lives }}</span>
-        </div>
-        <div class="bar-container segmented">
-          <div
-            v-for="i in maxBarSegments"
-            :key="'vida-' + i"
-            class="segment"
-            :class="{ filled: i <= filledHealthSegments }"
-          ></div>
-          <span class="bar-label">
-            {{ Math.floor(gameState.player.health) }}/{{ Math.floor(gameState.player.maxHealth) }}
-          </span>
+    <!-- Centro inferior: vida (anel) | inventário | stamina (anel), estilo Trove -->
+    <div class="hud-bottom-cluster">
+      <div class="orb orb--health" role="status" aria-label="Vida">
+        <svg class="orb-svg" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient :id="orbGradIdHp" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#ff6b6b" />
+              <stop offset="100%" stop-color="#8b1515" />
+            </linearGradient>
+          </defs>
+          <circle class="orb-track" cx="50" cy="50" :r="ringR" fill="none" />
+          <circle
+            class="orb-arc orb-arc--health"
+            cx="50"
+            cy="50"
+            :r="ringR"
+            fill="none"
+            :stroke="`url(#${orbGradIdHp})`"
+            :stroke-dasharray="ringCircumference"
+            :stroke-dashoffset="healthRingOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div class="orb-core">
+          <span class="orb-pct">{{ healthPercent }}%</span>
+          <span class="orb-meta">{{ gameState.player.lives }} ♥</span>
         </div>
       </div>
 
-      <!-- Energia -->
-      <div class="stat energia">
-        <div class="icon-container">
-          <img src="/icons/stam-icon.png" alt="Energia" class="icon" />
-        </div>
-        <div class="bar-container segmented">
-          <div
-            v-for="i in maxBarSegments"
-            :key="'energia-' + i"
-            class="segment"
-            :class="{ filled: i <= filledStaminaSegments }"
-          ></div>
-          <span class="bar-label">
-            {{ Math.floor(gameState.player.stamina) }}/{{ Math.floor(gameState.player.maxStamina) }}
-          </span>
+      <button
+        type="button"
+        class="hud-bag-center"
+        @click="toggleBag"
+        aria-label="Abrir inventário"
+      >
+        <img src="/icons/bag-icon.png" alt="" class="hud-bag-center-icon" />
+      </button>
+
+      <div class="orb orb--stamina" role="status" aria-label="Energia">
+        <svg class="orb-svg" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient :id="orbGradIdSt" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#9feb6a" />
+              <stop offset="100%" stop-color="#2d5016" />
+            </linearGradient>
+          </defs>
+          <circle class="orb-track" cx="50" cy="50" :r="ringR" fill="none" />
+          <circle
+            class="orb-arc orb-arc--stamina"
+            cx="50"
+            cy="50"
+            :r="ringR"
+            fill="none"
+            :stroke="`url(#${orbGradIdSt})`"
+            :stroke-dasharray="ringCircumference"
+            :stroke-dashoffset="staminaRingOffset"
+            transform="rotate(-90 50 50)"
+          />
+        </svg>
+        <div class="orb-core">
+          <span class="orb-pct">{{ staminaPercent }}%</span>
+          <span class="orb-meta orb-meta--dim">STA</span>
         </div>
       </div>
     </div>
 
-    <!-- Botões no lado direito central -->
-    <div class="hud-buttons">
-      <button class="menu-button" @click="togglePauseMenu" :class="{ active: pauseMenuOpen }">
+    <!-- Menu + mapa à direita -->
+    <div class="hud-buttons hud-buttons--side">
+      <button type="button" class="menu-button" @click="togglePauseMenu" :class="{ active: pauseMenuOpen }">
         <span></span>
         <span></span>
         <span></span>
       </button>
 
-      <button class="map-button" @click="handleMapClick">
+      <button type="button" class="map-button" @click="handleMapClick">
         <img src="/icons/map-icon.png" alt="Mapa" class="button-icon" />
       </button>
-
-      <button class="bag-button" @click="toggleBag">
-        <img src="/icons/bag-icon.png" alt="Mochila" class="button-icon" />
-      </button>
     </div>
 
-    <Inventory v-if="inventoryOpen" />
+    <Teleport to="body">
+      <div v-if="inventoryOpen" class="inventory-shell">
+        <div
+          class="inventory-backdrop"
+          aria-hidden="true"
+          @click.self="inventoryOpen = false"
+        />
+        <Inventory @update:show="onInventoryShow" />
+      </div>
+    </Teleport>
 
     <!-- Menu de Pausa -->
     <div v-if="pauseMenuOpen" class="pause-menu-overlay">
@@ -82,7 +113,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import Inventory from '@/components/Inventory.vue'
 import Options from '@/components/Options.vue'
@@ -102,6 +133,9 @@ audioManager.buttonClickSound.volume = 0.5
 defineProps(['potions', 'coins', 'tossRewardMessage'])
 const gameState = useGameState()
 const router = useRouter()
+
+const orbGradIdHp = `hud-orb-hp-${useId()}`
+const orbGradIdSt = `hud-orb-st-${useId()}`
 
 const inventoryOpen = ref(false)
 const pauseMenuOpen = ref(false)
@@ -147,6 +181,10 @@ const toggleBag = () => {
   inventoryOpen.value = !inventoryOpen.value
 }
 
+const onInventoryShow = (open) => {
+  if (!open) inventoryOpen.value = false
+}
+
 const togglePauseMenu = () => {
   pauseMenuOpen.value = !pauseMenuOpen.value
   if (pauseMenuOpen.value) inventoryOpen.value = false
@@ -181,186 +219,242 @@ const handleMapClick = () => {
   }, 150)
 }
 
-const maxBarSegments = 10
+/** Anel SVG (viewBox 100×100), mesmo raio dos dois orbes */
+const ringR = 38
+const ringCircumference = 2 * Math.PI * ringR
 
-const filledHealthSegments = computed(() => {
-  return Math.round((gameState.player.health / gameState.player.maxHealth) * maxBarSegments)
+const healthPercent = computed(() => {
+  const max = gameState.player.maxHealth || 1
+  return Math.min(100, Math.max(0, Math.round((gameState.player.health / max) * 100)))
 })
 
-const filledStaminaSegments = computed(() => {
-  return Math.round((gameState.player.stamina / gameState.player.maxStamina) * maxBarSegments)
+const staminaPercent = computed(() => {
+  const max = gameState.player.maxStamina || 1
+  return Math.min(100, Math.max(0, Math.round((gameState.player.stamina / max) * 100)))
+})
+
+const healthRingOffset = computed(() => {
+  const p = healthPercent.value / 100
+  return ringCircumference * (1 - p)
+})
+
+const staminaRingOffset = computed(() => {
+  const p = staminaPercent.value / 100
+  return ringCircumference * (1 - p)
 })
 </script>
 
 <style scoped>
 .main-hud {
   position: fixed;
-  bottom: 10px;
-  left: 5px;
+  inset: 0;
   z-index: 1000;
-  font-size: 6px;
-  letter-spacing: 0.5px;
+  pointer-events: none;
   font-family: var(--game-ui-font);
+  --orb-size: clamp(76px, 19vmin, 132px);
+  --hud-btn-size: clamp(44px, 11vmin, 104px);
+  --hud-bag-size: clamp(56px, 14vmin, 104px);
 }
 
-.panel-frame {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.stat {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.icon-container {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.icon {
-  width: 64px;
-  height: 64px;
-  image-rendering: pixelated;
-  margin-left: 20px;
-  z-index: 10;
-}
-
-.lives-count {
-  position: absolute;
-  top: 60%;
-  left: 80%;
-  transform: translate(-50%, -50%);
-  font-size: 16px;
-  color: var(--game-cream);
-  text-shadow: 1px 1px 2px #000;
-  font-weight: bold;
-  z-index: 11;
-}
-
-.bar-container {
-  position: relative;
-  width: 280px;
-  height: 34px;
-  background: var(--game-bar-bg);
-  border: 3px solid var(--game-bar-border);
-  overflow: hidden;
-  box-shadow: var(--game-shadow-inset), 0 2px 6px rgba(0, 0, 0, 0.45);
-  border-radius: 4px;
-}
-
-.bar-label {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 16px;
-  color: var(--game-gold-bright);
-  text-shadow: 2px 2px 0 #000;
-  font-weight: bold;
-  line-height: 24px;
-  letter-spacing: 1px;
-}
-
-.bar-container.segmented {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.5px;
-  padding: 1px;
-}
-
-.segment {
-  flex: none;
-  width: 26px;
-  height: 28px;
-  background: var(--game-bar-empty);
-  border: 1px solid rgba(0, 0, 0, 0.45);
-  box-shadow: inset 0 0 4px #000;
-}
-
-.vida .segment.filled {
-  background: linear-gradient(to bottom, var(--game-life-start), var(--game-life-end));
-}
-
-.energia .segment.filled {
-  background: linear-gradient(
-    to bottom,
-    var(--game-stamina-start),
-    var(--game-stamina-end)
-  );
-}
-
-.moedas .bar-label {
-  position: static;
-  transform: none;
-  font-size: 18px;
-  margin-left: 10px;
-}
-
-.hud-buttons {
+/* Faixa inferior central — Trove-like */
+.hud-bottom-cluster {
+  pointer-events: auto;
   position: fixed;
-  right: 10px;
-  top: -150%;
-  transform: translateY(-50%);
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 3.5vmin, 28px);
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
+}
+
+.orb {
+  position: relative;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  flex-shrink: 0;
+}
+
+.orb-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.orb-track {
+  stroke: rgba(12, 8, 6, 0.92);
+  stroke-width: 9;
+}
+
+.orb-arc {
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.28s ease-out;
+}
+
+.orb-core {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.orb-pct {
+  font-size: clamp(17px, 4.2vmin, 28px);
+  font-weight: 800;
+  color: var(--game-cream);
+  text-shadow:
+    0 1px 0 #000,
+    0 -1px 0 rgba(0, 0, 0, 0.85),
+    2px 2px 4px rgba(0, 0, 0, 0.9);
+  line-height: 1;
+}
+
+.orb-meta {
+  margin-top: 4px;
+  font-size: clamp(11px, 2.6vmin, 14px);
+  font-weight: 700;
+  color: var(--game-gold-bright);
+  text-shadow: 1px 1px 2px #000;
+}
+
+.orb-meta--dim {
+  font-size: clamp(10px, 2.2vmin, 12px);
+  letter-spacing: 0.12em;
+  opacity: 0.85;
+}
+
+.hud-bag-center {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: var(--hud-bag-size);
+  height: var(--hud-bag-size);
+  padding: clamp(6px, 1.6vmin, 12px);
+  border: 4px solid var(--game-border-gold);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(80, 52, 28, 0.95) 0%,
+    rgba(26, 15, 7, 0.98) 55%,
+    #120a05 100%
+  );
+  box-shadow:
+    inset 0 2px 10px rgba(255, 220, 160, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.hud-bag-center:hover {
+  transform: scale(1.06);
+  transition: transform 0.18s ease;
+}
+
+.hud-bag-center:active {
+  transform: scale(0.96);
+}
+
+.hud-bag-center-icon {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+/* Menu + mapa: canto superior direito (fora do cluster inferior) */
+.hud-buttons--side {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: auto;
+  transform: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: clamp(8px, 2vmin, 14px);
+  z-index: 1001;
+  pointer-events: auto;
+}
+
+.inventory-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px))
+    max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.inventory-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 8, 4, 0.72);
+  pointer-events: auto;
 }
 
 .menu-button,
-.map-button,
-.bag-button {
+.map-button {
   background: transparent;
   border: none;
   cursor: pointer;
   padding: 0;
-  width: 122px;
-  height: 122px;
+  width: var(--hud-btn-size);
+  height: var(--hud-btn-size);
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   justify-content: center;
   align-items: center;
 }
 
 .map-button:hover img,
-.bag-button:hover img,
 .menu-button:hover {
   transform: scale(1.1);
   transition: transform 0.2s;
 }
 
 .map-button:active img,
-.bag-button:active img,
 .menu-button:active {
   transform: scale(0.95);
   transition: transform 0.1s;
 }
 
 .button-icon {
-  width: 122px;
-  height: 122px;
+  width: 78%;
+  height: 78%;
+  max-width: var(--hud-btn-size);
+  max-height: var(--hud-btn-size);
+  object-fit: contain;
   image-rendering: pixelated;
   z-index: 12;
 }
 
 .menu-button {
   flex-direction: column;
-  gap: 10px;
+  gap: clamp(6px, 1.5vmin, 10px);
   background: rgba(0, 0, 0, 0);
-  padding: 20px;
+  padding: clamp(8px, 2vmin, 20px);
   z-index: 12;
 }
 
 .menu-button span {
   display: block;
-  width: 60px;
-  height: 8px;
+  width: min(60px, 52%);
+  height: clamp(5px, 1.2vmin, 8px);
   background-color: var(--game-gold-bright);
   border-radius: 4px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
@@ -380,11 +474,12 @@ const filledStaminaSegments = computed(() => {
 }
 
 .pause-menu-overlay {
+  pointer-events: auto;
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
+  inset: 0;
+  width: auto;
+  height: auto;
+  min-height: 100dvh;
   background: radial-gradient(
     ellipse at center,
     rgba(30, 18, 8, 0.55) 0%,
@@ -393,9 +488,12 @@ const filledStaminaSegments = computed(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 20;
+  z-index: 10020;
   animation: fadeIn 0.3s ease-in-out;
   backdrop-filter: blur(2px);
+  box-sizing: border-box;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 
 @keyframes fadeIn {

@@ -175,7 +175,7 @@ function playClick() {
   align-items: center;
   background: var(--game-overlay-scrim);
   backdrop-filter: blur(3px);
-  z-index: 100;
+  z-index: 10030;
 }
 
 .slide-down {

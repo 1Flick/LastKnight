@@ -166,12 +166,12 @@
   filter: brightness(1.05);
 }
 
-/* HUD — moldura pergaminho ao redor de vida/energia */
-.game-ui-hud-root {
-  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
-}
+/* HUD — moldura pergaminho ao redor de vida/energia.
+   O drop-shadow fica só no painel: filter no .game-ui-hud-root quebrava position:fixed
+   dos filhos (overlay de pausa, botões), relativizando-os ao HUD em vez da viewport. */
 
 .game-ui-hud-panel {
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.45));
   padding: 14px 16px;
   border-radius: 10px;
   background: linear-gradient(

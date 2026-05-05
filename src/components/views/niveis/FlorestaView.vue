@@ -2,8 +2,11 @@
   <div class="floresta-view" style="position: relative;">
     <canvas ref="canvasRef" class="game-canvas"></canvas>
 
-    <!-- HUD Component -->
-    <HUD class="hud" />
+    <HUD />
+
+    <div v-if="goldPickupMessage" class="gold-pickup-toast game-ui-toast--reward" role="status">
+      {{ goldPickupMessage }}
+    </div>
 
     <!-- Enter Prompt -->
     <div v-if="showEnterPrompt" class="enter-prompt game-ui-enter-prompt">
@@ -84,7 +87,13 @@ const defeatedEnemiesCount = ref(0);
 const totalEnemiesToDefeat = 6;
 const enemiesPerWave = 2;
 const currentWave = ref(0);
+/** Escala do jogador (sprite 96px base) */
 const SPRITE_SCALE = 5;
+/** Ratos: sprites 32×32 — escala menor que o herói para ficarem proporcionais */
+const RAT_SCALE = 3.5;
+/** Área inferior reservada ao HUD (orbes + mochila) para não sobrepor o combate */
+const HUD_BOTTOM_RESERVE = 130;
+const goldPickupMessage = ref('');
 const attackCooldown = 1000;
 const staminaRecoveryRate = 20;
 let lastAttackTime = 0;
@@ -271,11 +280,12 @@ const closeIntroDialog = () => {
   playBackgroundMusic();
 };
 
-// Redimensionar canvas
+// Redimensionar canvas (solo mais alto = menos overlap com HUD inferior fixo)
 const resizeCanvas = (canvas) => {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  groundY.value = canvas.height - 64 * SPRITE_SCALE - 20 - 100;
+  groundY.value =
+    canvas.height - 64 * SPRITE_SCALE - 20 - 100 - HUD_BOTTOM_RESERVE;
 };
 
 // Gerar onda de inimigos
@@ -288,10 +298,10 @@ const spawnWave = (canvas) => {
     enemies.value.push({
       x,
       y: groundY.value + 96,
-      width: 64,
-      height: 60,
+      width: 32,
+      height: 32,
       dx: 0,
-      name: 'Lobo',
+      name: 'Rato',
       life: 50,
       maxLife: 50,
       frameIndex: 0,
@@ -311,21 +321,60 @@ const checkWaveCompletion = (canvas) => {
   }
 };
 
+function rectsOverlap(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+let goldToastTimer = null;
+function flashGold(text) {
+  goldPickupMessage.value = text;
+  if (goldToastTimer) window.clearTimeout(goldToastTimer);
+  goldToastTimer = window.setTimeout(() => {
+    goldPickupMessage.value = '';
+    goldToastTimer = null;
+  }, 2200);
+}
+
+/** Hitbox do golpe: arco à frente do jogador (espada), não o corpo inteiro */
+function buildSwordHitbox() {
+  const pw = frameWidth * SPRITE_SCALE;
+  const ph = frameHeight * SPRITE_SCALE;
+  const reach = 135;
+  const swordH = ph * 0.52;
+  const swordY = player.y + ph * 0.2;
+  if (lastDirection.value === 'right') {
+    return {
+      x: player.x + pw * 0.42,
+      y: swordY,
+      width: reach,
+      height: swordH,
+    };
+  }
+  return {
+    x: player.x + pw * 0.42 - reach,
+    y: swordY,
+    width: reach,
+    height: swordH,
+  };
+}
+
 // Lógica de ataque do jogador
 const attackEnemy = () => {
   const now = Date.now();
   if (now - lastAttackTime < attackCooldown) {
-    console.log('Player attack on cooldown:', now - lastAttackTime);
     return;
   }
   if (gameState.player.stamina < 10) {
-    console.log('Not enough stamina to attack!');
     return;
   }
 
   const attack = gameState.playerAttackAction();
   if (!attack.success) {
-    console.log('Player attack failed:', attack.message);
     return;
   }
 
@@ -334,59 +383,60 @@ const attackEnemy = () => {
   player.frameIndex = 0;
   gameState.useStamina(10);
   playSound(playerAttackAudio, 0.6);
-  console.log(`Player attacked, stamina reduced to ${gameState.player.stamina}`);
 
-  const playerBox = {
-    x: player.x,
-    y: player.y,
-    width: player.width * SPRITE_SCALE,
-    height: player.height * SPRITE_SCALE,
-  };
+  const swordBox = buildSwordHitbox();
 
-  let closestEnemyIndex = -1;
-  let minDistance = Infinity;
+  let hitIndex = -1;
+  let bestDist = Infinity;
+  const pw = frameWidth * SPRITE_SCALE;
+  const pc = player.x + pw / 2;
+
   enemies.value.forEach((enemy, index) => {
     const enemyBox = {
       x: enemy.x,
       y: enemy.y,
-      width: enemy.width * SPRITE_SCALE,
-      height: enemy.height * SPRITE_SCALE,
+      width: enemy.width * RAT_SCALE,
+      height: enemy.height * RAT_SCALE,
     };
-    const distX = (playerBox.x + playerBox.width / 2) - (enemyBox.x + enemyBox.width / 2);
-    const distance = Math.abs(distX);
-    if (distance < minDistance) {
-      minDistance = distance;
-      closestEnemyIndex = index;
+    if (!rectsOverlap(swordBox, enemyBox)) return;
+    const ecx = enemyBox.x + enemyBox.width / 2;
+    const d = Math.abs(ecx - pc);
+    if (d < bestDist) {
+      bestDist = d;
+      hitIndex = index;
     }
   });
 
-  if (closestEnemyIndex !== -1) {
-    const enemy = enemies.value[closestEnemyIndex];
-    const damage = attack.damage || 10;
-    console.log(`Player deals ${damage} damage to ${enemy.name}`);
-    enemy.life -= damage;
-    if (enemy.life <= 0) {
-      console.log(`${enemy.name} defeated`);
-      enemies.value.splice(closestEnemyIndex, 1);
-      defeatedEnemiesCount.value++;
-      gameState.addGold(10);
-      showForestDialog.value = false;
-      showEnterPrompt.value = false;
-      stopSound(promptAudio);
-      checkWaveCompletion(canvasRef.value);
-      if (defeatedEnemiesCount.value >= totalEnemiesToDefeat) {
-        showVictoryDialog.value = true;
-        stopBackgroundMusic();
-        playSound(victoryAudio, 0.8);
-        gameState.addGold(60);
-      }
+  if (hitIndex === -1) {
+    return;
+  }
+
+  const enemy = enemies.value[hitIndex];
+  const damage = attack.damage || 10;
+  enemy.life -= damage;
+  if (enemy.life <= 0) {
+    enemies.value.splice(hitIndex, 1);
+    defeatedEnemiesCount.value++;
+    gameState.addGold(10);
+    let coinMsg = '+10 moedas';
+    showForestDialog.value = false;
+    showEnterPrompt.value = false;
+    stopSound(promptAudio);
+    checkWaveCompletion(canvasRef.value);
+    if (defeatedEnemiesCount.value >= totalEnemiesToDefeat) {
+      gameState.addGold(60);
+      coinMsg = '+70 moedas (último rato + bônus da floresta)';
+      showVictoryDialog.value = true;
+      stopBackgroundMusic();
+      playSound(victoryAudio, 0.8);
     }
+    flashGold(coinMsg);
   }
 };
 
 // Usar ou equipar item
 const useOrEquipItem = (itemId) => {
-  const item = постараются[itemId];
+  const item = ITEMS[itemId];
   if (!item) return;
   if (item.type === 'Arma' && item.slot === 'weapon') {
     gameState.equipItem(itemId);
@@ -410,8 +460,8 @@ const drawEnemies = (ctx) => {
     if (anim.sprite.complete) {
       ctx.save();
       const isLeftFacing = enemy.currentAnimation === 'walk_left';
-      const scaledWidth = enemy.width * SPRITE_SCALE;
-      const scaledHeight = enemy.height * SPRITE_SCALE;
+      const scaledWidth = enemy.width * RAT_SCALE;
+      const scaledHeight = enemy.height * RAT_SCALE;
       if (isLeftFacing) {
         ctx.scale(-1, 1);
         ctx.drawImage(
@@ -441,15 +491,15 @@ const drawEnemies = (ctx) => {
       ctx.restore();
     } else {
       ctx.fillStyle = 'blue';
-      ctx.fillRect(enemy.x, enemy.y, enemy.width * SPRITE_SCALE, enemy.height * SPRITE_SCALE);
+      ctx.fillRect(enemy.x, enemy.y, enemy.width * RAT_SCALE, enemy.height * RAT_SCALE);
     }
 
     ctx.fillStyle = 'white';
     ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText(enemy.name, enemy.x + (enemy.width * SPRITE_SCALE) / 2, enemy.y - 30);
+    ctx.fillText(enemy.name, enemy.x + (enemy.width * RAT_SCALE) / 2, enemy.y - 30);
 
-    const barWidth = enemy.width * SPRITE_SCALE;
+    const barWidth = enemy.width * RAT_SCALE;
     const barHeight = 8;
     const lifeRatio = enemy.life / enemy.maxLife;
 
@@ -565,8 +615,8 @@ const checkProximity = () => {
 
   const playerCenterX = player.x + (frameWidth * SPRITE_SCALE) / 2;
   const nearEnemy = enemies.value.some((enemy) => {
-    const enemyCenterX = enemy.x + (enemy.width * SPRITE_SCALE) / 2;
-    return Math.abs(playerCenterX - enemyCenterX) < 150;
+    const enemyCenterX = enemy.x + (enemy.width * RAT_SCALE) / 2;
+    return Math.abs(playerCenterX - enemyCenterX) < 180;
   });
 
   if (nearEnemy && !showForestDialog.value) {
@@ -589,7 +639,7 @@ const enemyLogic = (canvas, now) => {
   const playerCenterX = player.x + (frameWidth * SPRITE_SCALE) / 2;
 
   enemies.value.forEach((enemy) => {
-    const enemyCenterX = enemy.x + (enemy.width * SPRITE_SCALE) / 2;
+    const enemyCenterX = enemy.x + (enemy.width * RAT_SCALE) / 2;
     const distX = enemyCenterX - playerCenterX;
     const distance = Math.abs(distX);
 
@@ -623,7 +673,7 @@ const enemyLogic = (canvas, now) => {
         enemy.dx = distX > 0 ? -3 : 3;
         enemy.currentAnimation = distX > 0 ? 'walk_left' : 'walk_right';
         const nextX = enemy.x + enemy.dx;
-        if (nextX >= 0 && nextX <= canvas.width - enemy.width * SPRITE_SCALE) {
+        if (nextX >= 0 && nextX <= canvas.width - enemy.width * RAT_SCALE) {
           enemy.x = nextX;
         }
       }
@@ -809,22 +859,25 @@ onMounted(() => {
   z-index: 0;
 }
 
-.hud {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  padding: 10px;
-  border-radius: 6px;
-}
-
 .enter-prompt {
   position: absolute;
-  bottom: 20px;
+  bottom: max(150px, calc(env(safe-area-inset-bottom, 0px) + 140px));
   left: 50%;
   transform: translateX(-50%);
   user-select: none;
   pointer-events: none;
   z-index: 100;
+}
+
+.gold-pickup-toast {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  pointer-events: none;
+  padding: 12px 22px;
+  font-size: clamp(16px, 3.5vmin, 22px);
 }
 
 .dialog-box {

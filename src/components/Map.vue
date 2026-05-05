@@ -44,9 +44,11 @@
 import { ref, onMounted, watch, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUiOverlayStore } from '@/stores/uiOverlay';
+import { useGameState } from '@/stores/gameState';
 
 const router = useRouter();
 const uiOverlay = useUiOverlayStore();
+const gameState = useGameState();
 const backgroundMusic = ref(null); // Referência ao elemento de áudio
 const buttonClickSound = new Audio('/sounds/map.mp3'); // Som do botão
 
@@ -137,27 +139,44 @@ const areas = ref([
   },
 ]);
 
+/** Snapshot anterior por nome de área — null até a primeira sincronização. */
+const previousAreaUnlocked = ref(null);
+
+const areaShouldUnlock = (areaName) => {
+  const gc = gameState.levelsCompleted;
+  const keys = gameState.player.keys;
+  switch (areaName) {
+    case 'Reino Albadia':
+    case 'Floresta':
+    case 'Rio':
+      return true;
+    case 'Ruínas':
+      return gc.includes('rio');
+    case 'Caverna':
+      return gc.includes('ruinas_boss');
+    case 'Montanha Glacial':
+      return gc.includes('caverna_boss');
+    case 'Castelo de Magnus':
+      return Boolean(keys.ancestral && keys.ice && keys.fire);
+    default:
+      return false;
+  }
+};
+
 const updateUnlockedAreas = () => {
-  const progress = localStorage.getItem('progress');
-  const previousProgress = localStorage.getItem('previousProgress') || '';
+  const prev = previousAreaUnlocked.value;
+  const firstSync = prev === null;
+  const snap = {};
 
   areas.value.forEach((area) => {
-    area.newlyUnlocked = false;
+    const now = areaShouldUnlock(area.name);
+    const was = firstSync ? false : prev[area.name];
+    area.unlocked = now;
+    area.newlyUnlocked = !firstSync && now && !was;
+    snap[area.name] = now;
   });
 
-  for (const step of progressSteps) {
-    if (progress === step.key && previousProgress !== progress) {
-      step.unlock.forEach(name => {
-        const area = areas.value.find(a => a.name === name);
-        if (area) {
-          area.unlocked = true;
-          area.newlyUnlocked = true;
-        }
-      });
-    }
-  }
-
-  localStorage.setItem('previousProgress', progress);
+  previousAreaUnlocked.value = snap;
 };
 
 const goToArea = async (area) => {
@@ -222,10 +241,9 @@ onUnmounted(() => {
 });
 
 watch(
-  () => localStorage.getItem('progress'),
-  () => {
-    updateUnlockedAreas();
-  }
+  () =>
+    `${[...gameState.levelsCompleted].sort().join('|')}:${gameState.player.keys.ancestral}:${gameState.player.keys.ice}:${gameState.player.keys.fire}`,
+  () => updateUnlockedAreas()
 );
 </script>
 
