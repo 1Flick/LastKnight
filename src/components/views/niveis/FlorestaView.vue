@@ -1,846 +1,313 @@
 <template>
-  <div class="floresta-view" style="position: relative;">
+  <div class="floresta-view">
     <canvas ref="canvasRef" class="game-canvas"></canvas>
-
     <HUD />
-
-    <div v-if="goldPickupMessage" class="gold-pickup-toast game-ui-toast--reward" role="status">
-      {{ goldPickupMessage }}
-    </div>
-
-    <!-- Enter Prompt -->
-    <div v-if="showEnterPrompt" class="enter-prompt game-ui-enter-prompt">
-      Pressione <span class="key">E</span> ou <span class="key">ESPAÇO</span> para atacar
-    </div>
-
-    <!-- Dialogs -->
-    <div v-if="showIntroDialog" class="dialog-box intro-dialog">
-      <div class="dialog-content">
-        <p v-for="(line, index) in currentDialogText" :key="index" class="dialog-line">
-          {{ line }}
-        </p>
-        <button v-if="isTypingComplete" @click="closeIntroDialog">Iniciar a Jornada</button>
-      </div>
-    </div>
-    <div v-if="showForestDialog" class="dialog-box forest-dialog">
-      <div class="dialog-content">
-        <p class="dialog-line">{{ forestDialogLine }}</p>
-      </div>
-    </div>
-    <div v-if="showVictoryDialog" class="dialog-box victory-dialog">
-      <div class="dialog-content">
-        <p v-for="(line, index) in victoryDialogLines" :key="index" class="dialog-line">
-          {{ line }}
-        </p>
-        <button @click="closeVictoryDialog">Continuar</button>
-      </div>
-    </div>
-    <div v-if="showGameOverDialog" class="dialog-box game-over-dialog">
-      <div class="dialog-content">
-        <p v-for="(line, index) in gameOverDialogLines" :key="index" class="dialog-line">
-          {{ line }}
-        </p>
-        <button @click="restartGame">Tentar Novamente</button>
-      </div>
-    </div>
-
-    <!-- Audio Elements -->
-    <audio ref="bgAudio" loop>
-      <source src="/sounds/floresta.mp3" type="audio/wav" />
-    </audio>
-    <audio ref="playerAttackAudio">
-      <source src="/sounds/hit_sound.mp3" type="audio/mp3" />
-    </audio>
-    <audio ref="enemyAttackAudio">
-      <source src="/sounds/hit_rat.mp3" type="audio/mp3" />
-    </audio>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
-import { useRouter } from 'vue-router';
-import { useGameState, ITEMS } from '@/stores/gameState.js';
-import HUD from '@/components/HUD.vue';
-import { createFrameGate } from '@/utils/fpsLoop';
+import { ref, onMounted, onUnmounted, onBeforeMount } from 'vue'
+import { useGameState } from '@/stores/gameState'
+import HUD from '@/components/HUD.vue'
+import { createFrameGate } from '@/utils/fpsLoop'
 
-const nextGameFrame = createFrameGate();
+let nextGameFrame = createFrameGate()
+const gameState = useGameState()
 
-const gameState = useGameState();
-const router = useRouter();
-const canvasRef = ref(null);
-const ctxRef = ref(null);
-const bgAudio = ref(null);
-const playerAttackAudio = ref(null);
-const enemyAttackAudio = ref(null);
-const typewriterAudio = ref(null);
-const victoryAudio = ref(null);
-const gameOverAudio = ref(null);
-const promptAudio = ref(null);
-const showIntroDialog = ref(true);
-const showForestDialog = ref(false);
-const showVictoryDialog = ref(false);
-const showGameOverDialog = ref(false);
-const showEnterPrompt = ref(false);
+const canvasRef = ref(null)
+let ctx = null
+let animationFrameId = null
+let isLoopRunning = false
 
-const defeatedEnemiesCount = ref(0);
-const totalEnemiesToDefeat = 6;
-const enemiesPerWave = 2;
-const currentWave = ref(0);
-/** Escala do jogador (sprite 96px base) */
-const SPRITE_SCALE = 5;
-/** Ratos: sprites 32×32 — escala menor que o herói para ficarem proporcionais */
-const RAT_SCALE = 3.5;
-/** Área inferior reservada ao HUD (orbes + mochila) para não sobrepor o combate */
-const HUD_BOTTOM_RESERVE = 130;
-const goldPickupMessage = ref('');
-const attackCooldown = 1000;
-const staminaRecoveryRate = 20;
-let lastAttackTime = 0;
+const world = {
+  width: 7000,
+  height: 5200
+}
 
-const frameTimer = ref(0);
-const staminaTimer = ref(0);
-const frameWidth = 96;
-const frameHeight = 96;
-const moving = ref({ jump: false, left: false, right: false });
-const isSprinting = ref(false);
-const lastDirection = ref('right');
-const isAttacking = ref(false);
-const isJumping = ref(false);
-const jumpVelocity = -25;
-const gravity = 1;
-const groundY = ref(0);
+/** < 1 = câmera mais “longe” (vê mais mapa ao redor do personagem) */
+const CAMERA_ZOOM = 0.48
 
-const keys = ref({ e: false, space: false });
-const currentDialogText = ref([]);
-const currentLineIndex = ref(0);
-const currentCharIndex = ref(0);
-const isTypingComplete = ref(false);
-let typingInterval = null;
-let animationFrameId = null;
+const keys = { w: false, a: false, s: false, d: false, shift: false }
+const maxStamina = gameState.player.maxStamina
+const staminaRecoveryRate = 10
+const staminaConsumptionRate = 25
 
-const backgroundImage = new Image();
-backgroundImage.src = '/img/Floresta/floresta-bg.png';
-const playerSprite = new Image();
-playerSprite.src = '/img/sprites/player/player_sprite.png';
-
-const enemyImages = {
-  idle: new Image(),
-  run: new Image(),
-  attack: new Image()
-};
-enemyImages.idle.src = '/img/sprites/rat/rat-idle.png';
-enemyImages.run.src = '/img/sprites/rat/rat-run.png';
-enemyImages.attack.src = '/img/sprites/rat/rat-attack.png';
-
-const animations = {
-  idle: { row: 2, frames: [7, 1, 2, 3, 4, 5], frameInterval: 150 },
-  walk_left: { row: 5, frames: [9, 8, 7, 6, 5, 4, 3, 2, 1, 0], frameInterval: 70 },
-  walk_right: { row: 5, frames: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], frameInterval: 70 },
-  attack_left: { row: 14, frames: [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11], frameInterval: 110 },
-  attack_right: { row: 14, frames: [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11], frameInterval: 100 },
-};
-
-const enemyAnimations = {
-  idle: { frames: [0, 1, 2, 3], frameInterval: 200, sprite: enemyImages.idle, frameWidth: 32, frameHeight: 32, scale: 2 },
-  walk_left: { frames: [0, 1, 2, 3, 4], frameInterval: 100, sprite: enemyImages.run, frameWidth: 32, frameHeight: 32, scale: 2 },
-  walk_right: { frames: [0, 1, 2, 3, 4], frameInterval: 100, sprite: enemyImages.run, frameWidth: 32, frameHeight: 32, scale: 2 },
-  attack: { frames: [0, 1, 2, 3], frameInterval: 100, sprite: enemyImages.attack, frameWidth: 32, frameHeight: 32, scale: 2 }
-};
-
-const currentAnimation = computed(() => {
-  if (isAttacking.value) {
-    return lastDirection.value === 'left' ? 'attack_left' : 'attack_right';
-  }
-  if (moving.value.left) return 'walk_left';
-  if (moving.value.right) return 'walk_right';
-  return 'idle';
-});
+const backgroundImage = new Image()
+const playerSpriteSheet = new Image()
+const frameWidth = 96
+const frameHeight = 96
 
 const player = {
-  x: 80,
-  y: 0,
-  width: 96,
-  height: 96,
-  frameIndex: 0,
-  dy: 0,
-};
-
-const enemies = ref([]);
-const lastAttackTimes = new Map();
-
-const introDialogLines = [
-  'Floresta Escura',
-];
-const forestDialogLines = [
-  'Um Rato guincha nas sombras... cuidado!',
-  'A fera te encara com olhos famintos!',
-  'Prepare sua arma, herói!',
-];
-const forestDialogLine = ref('');
-const victoryDialogLines = [
-  '✨ A floresta silencia, a maldição foi quebrada!',
-  'Os Ratos jazem derrotados, e a paz retorna às árvores.',
-  'Novos desafios aguardam-te além destas matas...',
-];
-const gameOverDialogLines = [
-  '💀 As garras dos Ratos prevaleceram, e a escuridão te engoliu.',
-  'A floresta não perdoa os incautos, mas tua alma persiste.',
-  'Levanta-te, herói, e enfrenta as feras novamente!',
-];
-
-// Função para garantir o AudioContext
-const ensureAudioContext = () => {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (AudioContext) {
-    const context = new AudioContext();
-    if (context.state === 'suspended') {
-      return context.resume().then(() => {
-        console.log('AudioContext resumed');
-      }).catch(error => console.error('Erro ao retomar AudioContext:', error));
-    }
-  }
-  return Promise.resolve();
-};
-
-// Pré-carregar áudios
-const preloadAudio = (audioRef, src) => {
-  if (audioRef.value) {
-    audioRef.value.src = src;
-    audioRef.value.load();
-    audioRef.value.onerror = () => console.error(`Erro ao carregar áudio: ${src}`);
-  }
-};
-
-// Tocar som
-const playSound = (audioRef, volume = 1.0, loop = false) => {
-  if (audioRef.value) {
-    ensureAudioContext().then(() => {
-      audioRef.value.currentTime = 0;
-      audioRef.value.volume = volume;
-      audioRef.value.loop = loop;
-      audioRef.value.play().catch(error => console.error(`Erro ao reproduzir áudio ${audioRef.value.src}:`, error));
-    });
-  }
-};
-
-// Parar som
-const stopSound = (audioRef) => {
-  if (audioRef.value) {
-    audioRef.value.pause();
-    audioRef.value.currentTime = 0;
-  }
-};
-
-// Tocar música de fundo
-const playBackgroundMusic = () => {
-  playSound(bgAudio, 0.3, true);
-};
-
-// Parar música de fundo
-const stopBackgroundMusic = () => {
-  stopSound(bgAudio);
-};
-
-// Iniciar efeito de digitação
-const startTypingEffect = () => {
-  currentDialogText.value = introDialogLines.map(() => '');
-  currentLineIndex.value = 0;
-  currentCharIndex.value = 0;
-  isTypingComplete.value = false;
-
-  playSound(typewriterAudio, 0.5, true);
-  typingInterval = setInterval(() => {
-    if (currentLineIndex.value >= introDialogLines.length) {
-      clearInterval(typingInterval);
-      isTypingComplete.value = true;
-      stopSound(typewriterAudio);
-      return;
-    }
-
-    const currentLine = introDialogLines[currentLineIndex.value];
-    if (currentCharIndex.value < currentLine.length) {
-      currentDialogText.value[currentLineIndex.value] = currentLine.slice(0, currentCharIndex.value + 1);
-      currentCharIndex.value++;
-    } else {
-      setTimeout(() => {
-        currentLineIndex.value++;
-        currentCharIndex.value = 0;
-      }, 500);
-    }
-    currentDialogText.value = [...currentDialogText.value];
-  }, 50);
-};
-
-// Fechar diálogo inicial
-const closeIntroDialog = () => {
-  clearInterval(typingInterval);
-  stopSound(typewriterAudio);
-  showIntroDialog.value = false;
-  playBackgroundMusic();
-};
-
-// Redimensionar canvas (solo mais alto = menos overlap com HUD inferior fixo)
-const resizeCanvas = (canvas) => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  groundY.value =
-    canvas.height - 64 * SPRITE_SCALE - 20 - 100 - HUD_BOTTOM_RESERVE;
-};
-
-// Gerar onda de inimigos
-const spawnWave = (canvas) => {
-  for (let i = 0; i < enemiesPerWave; i++) {
-    let x;
-    do {
-      x = 500 + Math.random() * 500;
-    } while (Math.abs(x - player.x) < 200);
-    enemies.value.push({
-      x,
-      y: groundY.value + 96,
-      width: 32,
-      height: 32,
-      dx: 0,
-      name: 'Rato',
-      life: 50,
-      maxLife: 50,
-      frameIndex: 0,
-      frameTimer: performance.now(),
-      currentAnimation: 'idle',
-      isAttacking: false,
-    });
-  }
-  currentWave.value++;
-  console.log(`Spawned wave ${currentWave.value} with ${enemies.value.length} rats`);
-};
-
-// Verificar conclusão da onda
-const checkWaveCompletion = (canvas) => {
-  if (enemies.value.length === 0 && defeatedEnemiesCount.value < totalEnemiesToDefeat) {
-    spawnWave(canvas);
-  }
-};
-
-function rectsOverlap(a, b) {
-  return (
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
-  );
+  x: world.width / 2,
+  y: world.height / 2,
+  size: 300,
+  speed: 6,
+  runSpeed: 9,
+  direction: 'idle'
 }
 
-let goldToastTimer = null;
-function flashGold(text) {
-  goldPickupMessage.value = text;
-  if (goldToastTimer) window.clearTimeout(goldToastTimer);
-  goldToastTimer = window.setTimeout(() => {
-    goldPickupMessage.value = '';
-    goldToastTimer = null;
-  }, 2200);
+const animations = {
+  idle: { row: 3, frames: [7, 1, 2, 3, 4, 5], frameInterval: 150 },
+  walk_down: { row: 6, frames: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], frameInterval: 100 },
+  walk_up: { row: 4, frames: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], frameInterval: 100 },
+  walk_left: { row: 20.1, frames: [9, 8, 7, 6, 5, 4, 3, 2, 1, 0], frameInterval: 100 },
+  walk_right: { row: 5, frames: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], frameInterval: 100 }
 }
 
-/** Hitbox do golpe: arco à frente do jogador (espada), não o corpo inteiro */
-function buildSwordHitbox() {
-  const pw = frameWidth * SPRITE_SCALE;
-  const ph = frameHeight * SPRITE_SCALE;
-  const reach = 135;
-  const swordH = ph * 0.52;
-  const swordY = player.y + ph * 0.2;
-  if (lastDirection.value === 'right') {
-    return {
-      x: player.x + pw * 0.42,
-      y: swordY,
-      width: reach,
-      height: swordH,
-    };
-  }
-  return {
-    x: player.x + pw * 0.42 - reach,
-    y: swordY,
-    width: reach,
-    height: swordH,
-  };
+let currentFrameIndex = 0
+let frameTimer = 0
+
+function resizeCanvas() {
+  if (!canvasRef.value) return
+  canvasRef.value.width = window.innerWidth
+  canvasRef.value.height = window.innerHeight
 }
 
-// Lógica de ataque do jogador
-const attackEnemy = () => {
-  const now = Date.now();
-  if (now - lastAttackTime < attackCooldown) {
-    return;
+function onKeyDown(e) {
+  const key = e.key.toLowerCase()
+  if (Object.prototype.hasOwnProperty.call(keys, key)) {
+    keys[key] = true
   }
-  if (gameState.player.stamina < 10) {
-    return;
+}
+
+function onKeyUp(e) {
+  const key = e.key.toLowerCase()
+  if (Object.prototype.hasOwnProperty.call(keys, key)) {
+    keys[key] = false
   }
+}
 
-  const attack = gameState.playerAttackAction();
-  if (!attack.success) {
-    return;
-  }
+/** Ponto do mundo que fica no centro da tela (com zoom e limites do mapa). */
+function getCameraCenter() {
+  const w = canvasRef.value.width
+  const h = canvasRef.value.height
+  const viewWorldW = w / CAMERA_ZOOM
+  const viewWorldH = h / CAMERA_ZOOM
+  const halfViewWorldW = viewWorldW / 2
+  const halfViewWorldH = viewWorldH / 2
 
-  lastAttackTime = now;
-  isAttacking.value = true;
-  player.frameIndex = 0;
-  gameState.useStamina(10);
-  playSound(playerAttackAudio, 0.6);
+  let cx = player.x
+  let cy = player.y
 
-  const swordBox = buildSwordHitbox();
-
-  let hitIndex = -1;
-  let bestDist = Infinity;
-  const pw = frameWidth * SPRITE_SCALE;
-  const pc = player.x + pw / 2;
-
-  enemies.value.forEach((enemy, index) => {
-    const enemyBox = {
-      x: enemy.x,
-      y: enemy.y,
-      width: enemy.width * RAT_SCALE,
-      height: enemy.height * RAT_SCALE,
-    };
-    if (!rectsOverlap(swordBox, enemyBox)) return;
-    const ecx = enemyBox.x + enemyBox.width / 2;
-    const d = Math.abs(ecx - pc);
-    if (d < bestDist) {
-      bestDist = d;
-      hitIndex = index;
-    }
-  });
-
-  if (hitIndex === -1) {
-    return;
-  }
-
-  const enemy = enemies.value[hitIndex];
-  const damage = attack.damage || 10;
-  enemy.life -= damage;
-  if (enemy.life <= 0) {
-    enemies.value.splice(hitIndex, 1);
-    defeatedEnemiesCount.value++;
-    gameState.addGold(10);
-    let coinMsg = '+10 moedas';
-    showForestDialog.value = false;
-    showEnterPrompt.value = false;
-    stopSound(promptAudio);
-    checkWaveCompletion(canvasRef.value);
-    if (defeatedEnemiesCount.value >= totalEnemiesToDefeat) {
-      gameState.addGold(60);
-      coinMsg = '+70 moedas (último rato + bônus da floresta)';
-      showVictoryDialog.value = true;
-      stopBackgroundMusic();
-      playSound(victoryAudio, 0.8);
-    }
-    flashGold(coinMsg);
-  }
-};
-
-// Usar ou equipar item
-const useOrEquipItem = (itemId) => {
-  const item = ITEMS[itemId];
-  if (!item) return;
-  if (item.type === 'Arma' && item.slot === 'weapon') {
-    gameState.equipItem(itemId);
-  } else if (item.type === 'Consumível' || item.type === 'Consumível Especial') {
-    gameState.useItem(itemId);
-  }
-};
-
-// Fechar diálogo de vitória
-const closeVictoryDialog = () => {
-  showVictoryDialog.value = false;
-  stopSound(victoryAudio);
-  router.push('/level/albadia');
-};
-
-// Desenhar inimigos
-const drawEnemies = (ctx) => {
-  enemies.value.forEach((enemy) => {
-    const anim = enemyAnimations[enemy.currentAnimation];
-    const frameX = anim.frames[enemy.frameIndex] * anim.frameWidth;
-    if (anim.sprite.complete) {
-      ctx.save();
-      const isLeftFacing = enemy.currentAnimation === 'walk_left';
-      const scaledWidth = enemy.width * RAT_SCALE;
-      const scaledHeight = enemy.height * RAT_SCALE;
-      if (isLeftFacing) {
-        ctx.scale(-1, 1);
-        ctx.drawImage(
-          anim.sprite,
-          frameX,
-          0,
-          anim.frameWidth,
-          anim.frameHeight,
-          -(enemy.x + scaledWidth),
-          enemy.y,
-          scaledWidth,
-          scaledHeight
-        );
-      } else {
-        ctx.drawImage(
-          anim.sprite,
-          frameX,
-          0,
-          anim.frameWidth,
-          anim.frameHeight,
-          enemy.x,
-          enemy.y,
-          scaledWidth,
-          scaledHeight
-        );
-      }
-      ctx.restore();
-    } else {
-      ctx.fillStyle = 'blue';
-      ctx.fillRect(enemy.x, enemy.y, enemy.width * RAT_SCALE, enemy.height * RAT_SCALE);
-    }
-
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 16px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText(enemy.name, enemy.x + (enemy.width * RAT_SCALE) / 2, enemy.y - 30);
-
-    const barWidth = enemy.width * RAT_SCALE;
-    const barHeight = 8;
-    const lifeRatio = enemy.life / enemy.maxLife;
-
-    ctx.fillStyle = 'red';
-    ctx.fillRect(enemy.x, enemy.y - 25, barWidth, barHeight);
-
-    ctx.fillStyle = 'limegreen';
-    ctx.fillRect(enemy.x, enemy.y - 25, barWidth * lifeRatio, barHeight);
-
-    ctx.strokeStyle = 'black';
-    ctx.strokeRect(enemy.x, enemy.y - 25, barWidth, barHeight);
-  });
-};
-
-// Desenhar jogador
-const drawPlayer = (ctx, now) => {
-  const anim = animations[currentAnimation.value];
-  if (now - frameTimer.value > anim.frameInterval) {
-    frameTimer.value = now;
-    player.frameIndex = (player.frameIndex + 1) % anim.frames.length;
-    if (isAttacking.value && player.frameIndex === 0) {
-      isAttacking.value = false;
-    }
-  }
-
-  if (playerSprite.complete) {
-    ctx.save();
-    const isLeftFacing = currentAnimation.value === 'walk_left' || currentAnimation.value === 'attack_left';
-    if (isLeftFacing) {
-      ctx.scale(-1, 1);
-      ctx.drawImage(
-        playerSprite,
-        anim.frames[player.frameIndex] * frameWidth,
-        anim.row * frameHeight,
-        frameWidth,
-        frameHeight,
-        -(player.x + frameWidth * SPRITE_SCALE),
-        player.y,
-        frameWidth * SPRITE_SCALE,
-        frameHeight * SPRITE_SCALE
-      );
-    } else {
-      ctx.drawImage(
-        playerSprite,
-        anim.frames[player.frameIndex] * frameWidth,
-        anim.row * frameHeight,
-        frameWidth,
-        frameHeight,
-        player.x,
-        player.y,
-        frameWidth * SPRITE_SCALE,
-        frameHeight * SPRITE_SCALE
-      );
-    }
-    ctx.restore();
+  if (world.width <= viewWorldW) {
+    cx = world.width / 2
   } else {
-    ctx.fillStyle = 'red';
-    ctx.fillRect(player.x, player.y, frameWidth * SPRITE_SCALE, frameHeight * SPRITE_SCALE);
-  }
-};
-
-// Atualizar posição do jogador
-const updatePlayer = (canvas, now) => {
-  const normalStep = 3;
-  const sprintStep = 5;
-  let nextPos = { x: player.x, y: player.y };
-
-  if (!(showIntroDialog.value || showVictoryDialog.value || showGameOverDialog.value)) {
-    let dx = 0;
-    let moved = false;
-    const step = isSprinting.value ? sprintStep : normalStep;
-    const staminaCost = isSprinting.value ? 2 : 1;
-
-    if (moving.value.left && gameState.player.stamina >= staminaCost) {
-      dx -= step;
-      lastDirection.value = 'left';
-      moved = true;
-    }
-    if (moving.value.right && gameState.player.stamina >= staminaCost) {
-      dx += step;
-      lastDirection.value = 'right';
-      moved = true;
-    }
-
-    if (moved) {
-      const magnitude = Math.abs(dx);
-      if (magnitude > 0) {
-        dx = (dx / magnitude) * step;
-      }
-      nextPos.x += dx;
-      if (nextPos.x >= 0 && nextPos.x <= canvas.width - frameWidth * SPRITE_SCALE) {
-        player.x = nextPos.x;
-      }
-    }
-
-    player.y = groundY.value + 96;
+    cx = Math.max(halfViewWorldW, Math.min(cx, world.width - halfViewWorldW))
   }
 
-  if (now - staminaTimer.value >= 1000 && gameState.player.stamina < gameState.player.maxStamina) {
-    gameState.recoverStamina(staminaRecoveryRate);
-    staminaTimer.value = now;
-  }
-};
-
-// Verificar proximidade para diálogos
-const checkProximity = () => {
-  if (showIntroDialog.value || showVictoryDialog.value || showGameOverDialog.value) {
-    showForestDialog.value = false;
-    showEnterPrompt.value = false;
-    stopSound(promptAudio);
-    return;
-  }
-
-  const playerCenterX = player.x + (frameWidth * SPRITE_SCALE) / 2;
-  const nearEnemy = enemies.value.some((enemy) => {
-    const enemyCenterX = enemy.x + (enemy.width * RAT_SCALE) / 2;
-    return Math.abs(playerCenterX - enemyCenterX) < 180;
-  });
-
-  if (nearEnemy && !showForestDialog.value) {
-    forestDialogLine.value = forestDialogLines[Math.floor(Math.random() * forestDialogLines.length)];
-    playSound(promptAudio, 0.5);
-  }
-
-  showForestDialog.value = nearEnemy;
-  showEnterPrompt.value = nearEnemy;
-};
-
-// Lógica de movimento e ataque dos inimigos
-const enemyLogic = (canvas, now) => {
-  if (gameState.player.lives <= 0) {
-    showGameOverDialog.value = true;
-    stopBackgroundMusic();
-    playSound(gameOverAudio, 0.8);
-    return;
-  }
-  const playerCenterX = player.x + (frameWidth * SPRITE_SCALE) / 2;
-
-  enemies.value.forEach((enemy) => {
-    const enemyCenterX = enemy.x + (enemy.width * RAT_SCALE) / 2;
-    const distX = enemyCenterX - playerCenterX;
-    const distance = Math.abs(distX);
-
-    if (now - enemy.frameTimer > enemyAnimations[enemy.currentAnimation].frameInterval) {
-      enemy.frameTimer = now;
-      enemy.frameIndex = (enemy.frameIndex + 1) % enemyAnimations[enemy.currentAnimation].frames.length;
-      if (enemy.isAttacking && enemy.frameIndex === 0) {
-        enemy.isAttacking = false;
-        enemy.currentAnimation = 'idle';
-      }
-    }
-
-    if (distance < 600) {
-      if (distance < 80 && enemy.y >= groundY.value - 10) {
-        const lastAttack = lastAttackTimes.get(enemy) || 0;
-        if (now - lastAttack > 2000) {
-          console.log(`${enemy.name} attacks player for 10 damage`);
-          enemy.currentAnimation = 'attack';
-          enemy.frameIndex = 0;
-          enemy.isAttacking = true;
-          playSound(enemyAttackAudio, 0.6);
-          gameState.takeDamage(10);
-          lastAttackTimes.set(enemy, now);
-          if (gameState.player.health <= 0) {
-            showGameOverDialog.value = true;
-            stopBackgroundMusic();
-            playSound(gameOverAudio, 0.8);
-          }
-        }
-      } else {
-        enemy.dx = distX > 0 ? -3 : 3;
-        enemy.currentAnimation = distX > 0 ? 'walk_left' : 'walk_right';
-        const nextX = enemy.x + enemy.dx;
-        if (nextX >= 0 && nextX <= canvas.width - enemy.width * RAT_SCALE) {
-          enemy.x = nextX;
-        }
-      }
-    } else {
-      enemy.dx = 0;
-      enemy.currentAnimation = 'idle';
-    }
-  });
-};
-
-// Reiniciar jogo
-const restartGame = () => {
-  if (gameState.player.lives <= 0) {
-    stopSound(gameOverAudio);
-    router.push('/gameOver');
+  if (world.height <= viewWorldH) {
+    cy = world.height / 2
   } else {
-    gameState.resetGame();
-    player.x = 80;
-    player.y = groundY.value + 96;
-    player.frameIndex = 0;
-    player.dy = 0;
-    isJumping.value = false;
-    defeatedEnemiesCount.value = 0;
-    currentWave.value = 0;
-    showGameOverDialog.value = false;
-    showForestDialog.value = false;
-    showEnterPrompt.value = false;
-    enemies.value = [];
-    lastAttackTimes.clear();
-    stopSound(gameOverAudio);
-    playBackgroundMusic();
-    spawnWave(canvasRef.value);
+    cy = Math.max(halfViewWorldH, Math.min(cy, world.height - halfViewWorldH))
   }
-};
+
+  return { x: cx, y: cy }
+}
+
+function update(deltaSeconds) {
+  const { w, a, s, d, shift } = keys
+  let moved = false
+  let dx = 0
+  let dy = 0
+
+  if (w) {
+    dy -= 1
+    moved = true
+  }
+  if (s) {
+    dy += 1
+    moved = true
+  }
+  if (a) {
+    dx -= 1
+    moved = true
+  }
+  if (d) {
+    dx += 1
+    moved = true
+  }
+
+  if (dx !== 0 && dy !== 0) {
+    const invSqrt2 = 1 / Math.sqrt(2)
+    dx *= invSqrt2
+    dy *= invSqrt2
+  }
+
+  if (!moved) {
+    player.direction = 'idle'
+    gameState.player.stamina = Math.min(maxStamina, gameState.player.stamina + staminaRecoveryRate * deltaSeconds)
+    return
+  }
+
+  let speed = player.speed
+  const canRun = shift && gameState.player.stamina > 0
+
+  if (canRun) {
+    speed = player.runSpeed
+    gameState.player.stamina = Math.max(0, gameState.player.stamina - staminaConsumptionRate * deltaSeconds)
+  } else {
+    gameState.player.stamina = Math.min(maxStamina, gameState.player.stamina + staminaRecoveryRate * deltaSeconds)
+  }
+
+  if (dy < 0) player.direction = 'walk_up'
+  else if (dy > 0) player.direction = 'walk_down'
+  else if (dx < 0) player.direction = 'walk_left'
+  else if (dx > 0) player.direction = 'walk_right'
+
+  player.x = Math.min(Math.max(player.x + dx * speed, 0), world.width)
+  player.y = Math.min(Math.max(player.y + dy * speed, 0), world.height)
+}
+
+function updateAnimation(deltaSeconds) {
+  const anim = animations[player.direction] || animations.idle
+  frameTimer += deltaSeconds * 1000
+  if (frameTimer > anim.frameInterval) {
+    frameTimer = 0
+    currentFrameIndex = (currentFrameIndex + 1) % anim.frames.length
+  }
+}
+
+function drawWorld() {
+  if (backgroundImage.complete && backgroundImage.naturalWidth > 0) {
+    ctx.drawImage(backgroundImage, 0, 0, world.width, world.height)
+    return
+  }
+
+  // Fallback visual caso o fundo não carregue.
+  ctx.fillStyle = '#18361f'
+  ctx.fillRect(0, 0, world.width, world.height)
+}
+
+function drawGrid() {
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)'
+  ctx.lineWidth = 0 / CAMERA_ZOOM
+  const step = 300
+
+  for (let x = 0; x <= world.width; x += step) {
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, world.height)
+    ctx.stroke()
+  }
+
+  for (let y = 0; y <= world.height; y += step) {
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(world.width, y)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
+function drawPlayer() {
+  const anim = animations[player.direction] || animations.idle
+  const frame = anim.frames[currentFrameIndex]
+  const sx = frame * frameWidth
+  const sy = anim.row * frameHeight
+
+  if (playerSpriteSheet.complete && playerSpriteSheet.naturalWidth > 0) {
+    ctx.drawImage(
+      playerSpriteSheet,
+      sx,
+      sy,
+      frameWidth,
+      frameHeight,
+      player.x - player.size / 2,
+      player.y - player.size / 2,
+      player.size,
+      player.size
+    )
+    return
+  }
+
+  ctx.fillStyle = '#e65f5f'
+  ctx.fillRect(player.x - 20, player.y - 20, 40, 40)
+}
+
+function draw() {
+  if (!ctx || !canvasRef.value) return
+
+  const w = canvasRef.value.width
+  const h = canvasRef.value.height
+  const center = getCameraCenter()
+
+  ctx.clearRect(0, 0, w, h)
+  ctx.save()
+  ctx.translate(w / 2, h / 2)
+  ctx.scale(CAMERA_ZOOM, CAMERA_ZOOM)
+  ctx.translate(-center.x, -center.y)
+  drawWorld()
+  drawGrid()
+  drawPlayer()
+  ctx.restore()
+}
+
+function gameLoop(timestamp) {
+  animationFrameId = requestAnimationFrame(gameLoop)
+  const elapsed = nextGameFrame(timestamp)
+  if (elapsed === null) return
+
+  const deltaSeconds = elapsed / 1000
+  update(deltaSeconds)
+  updateAnimation(deltaSeconds)
+  draw()
+}
+
+function tryStartLoop() {
+  if (isLoopRunning || !ctx || !canvasRef.value) return
+  const imagesReady =
+    playerSpriteSheet.complete &&
+    playerSpriteSheet.naturalWidth > 0
+
+  if (!imagesReady) return
+  isLoopRunning = true
+  animationFrameId = requestAnimationFrame(gameLoop)
+}
+
+onBeforeMount(() => {
+  nextGameFrame = createFrameGate()
+})
 
 onMounted(() => {
-  gameState.player.health = gameState.player.maxHealth || 100;
-  gameState.player.stamina = gameState.player.maxStamina || 100;
-  gameState.player.lives = gameState.player.lives || 3;
-  console.log('Initial state:', gameState.player);
+  if (!canvasRef.value) return
 
-  const canvas = canvasRef.value;
-  ctxRef.value = canvas.getContext('2d');
-  if (!ctxRef.value) {
-    console.error('Failed to get 2D context');
-    return;
+  ctx = canvasRef.value.getContext('2d')
+  if (!ctx) return
+
+  backgroundImage.src = '/img/Floresta/floresta-bg.jpg'
+  playerSpriteSheet.src = '/img/sprites/player/player_sprite.png'
+
+  backgroundImage.onload = tryStartLoop
+  backgroundImage.onerror = () => {
+    tryStartLoop()
   }
-  resizeCanvas(canvas);
+  playerSpriteSheet.onload = tryStartLoop
 
-  const handleResize = () => resizeCanvas(canvas);
-  window.addEventListener('resize', handleResize);
+  resizeCanvas()
+  window.addEventListener('resize', resizeCanvas)
+  document.addEventListener('keydown', onKeyDown)
+  document.addEventListener('keyup', onKeyUp)
 
-  // Pré-carregar áudios
-  preloadAudio(bgAudio, '/sounds/floresta.mp3');
-  preloadAudio(playerAttackAudio, '/sounds/hit_sound.mp3');
-  preloadAudio(enemyAttackAudio, '/sounds/hit_rat.mp3');
-  startTypingEffect();
+  // Permite iniciar mesmo com cache carregado.
+  tryStartLoop()
+})
 
-  const startGame = () => {
-    try {
-      player.y = groundY.value + 96;
-      spawnWave(canvas);
-      frameTimer.value = performance.now();
-      staminaTimer.value = performance.now();
-      loop();
-    } catch (error) {
-      console.error('Error starting game:', error);
-    }
-  };
+onUnmounted(() => {
+  window.removeEventListener('resize', resizeCanvas)
+  document.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('keyup', onKeyUp)
 
-  let imagesLoaded = 0;
-  const totalImages = 5;
-  const onImageLoad = () => {
-    imagesLoaded++;
-    if (imagesLoaded === totalImages) {
-      startGame();
-    }
-  };
-
-  [backgroundImage, playerSprite, enemyImages.idle, enemyImages.run, enemyImages.attack].forEach((img) => {
-    img.onload = onImageLoad;
-    if (img.complete) onImageLoad();
-    img.onerror = () => console.error(`Failed to load image: ${img.src}`);
-  });
-
-  const clear = () => {
-    ctxRef.value.clearRect(0, 0, canvas.width, canvas.height);
-  };
-
-  const drawBackground = () => {
-    if (backgroundImage.complete) {
-      ctxRef.value.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
-    }
-  };
-
-  const loop = (timestamp) => {
-    try {
-      animationFrameId = requestAnimationFrame(loop);
-      if (showIntroDialog.value || showVictoryDialog.value || showGameOverDialog.value) {
-        frameTimer.value = timestamp;
-        staminaTimer.value = timestamp;
-        return;
-      }
-      if (nextGameFrame(timestamp) === null) return;
-      clear();
-      drawBackground();
-      drawEnemies(ctxRef.value);
-      updatePlayer(canvas, timestamp);
-      drawPlayer(ctxRef.value, timestamp);
-      checkProximity();
-      enemyLogic(canvas, timestamp);
-    } catch (error) {
-      console.error('Error in game loop:', error);
-    }
-  };
-
-  const handleKeydown = (e) => {
-    if (gameState.player.lives <= 0) return;
-    const key = e.key.toLowerCase();
-    if (key === 'a') moving.value.left = true;
-    if (key === 'd') moving.value.right = true;
-    if (key === 'shift') isSprinting.value = true;
-    if (key === 'e' || e.code === 'Space') {
-      keys.value.e = key === 'e';
-      keys.value.space = e.code === 'Space';
-      attackEnemy();
-    }
-  };
-
-  const handleKeyup = (e) => {
-    const key = e.key.toLowerCase();
-    if (key === 'a') moving.value.left = false;
-    if (key === 'd') moving.value.right = false;
-    if (key === 'shift') isSprinting.value = false;
-    if (key === 'e') keys.value.e = false;
-    if (e.code === 'Space') keys.value.space = false;
-  };
-
-  window.addEventListener('keydown', handleKeydown);
-  window.addEventListener('keyup', handleKeyup);
-
-  onBeforeUnmount(() => {
-    window.removeEventListener('resize', handleResize);
-    window.removeEventListener('keydown', handleKeydown);
-    window.removeEventListener('keyup', handleKeyup);
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-    }
-    clearInterval(typingInterval);
-    stopBackgroundMusic();
-    stopSound(playerAttackAudio);
-    stopSound(enemyAttackAudio);
-    stopSound(typewriterAudio);
-    stopSound(victoryAudio);
-    stopSound(gameOverAudio);
-    stopSound(promptAudio);
-    enemies.value = [];
-    lastAttackTimes.clear();
-    defeatedEnemiesCount.value = 0;
-    currentWave.value = 0;
-  });
-});
+  if (animationFrameId != null) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
+  isLoopRunning = false
+})
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap');
-
 .floresta-view {
   position: relative;
   width: 100vw;
@@ -850,92 +317,8 @@ onMounted(() => {
 
 .game-canvas {
   display: block;
-  position: absolute;
-  top: 0;
-  left: 0;
-  background-color: #000;
   width: 100vw;
   height: 100vh;
-  z-index: 0;
-}
-
-.enter-prompt {
-  position: absolute;
-  bottom: max(150px, calc(env(safe-area-inset-bottom, 0px) + 140px));
-  left: 50%;
-  transform: translateX(-50%);
-  user-select: none;
-  pointer-events: none;
-  z-index: 100;
-}
-
-.gold-pickup-toast {
-  position: fixed;
-  top: max(18px, env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1100;
-  pointer-events: none;
-  padding: 12px 22px;
-  font-size: clamp(16px, 3.5vmin, 22px);
-}
-
-.dialog-box {
-  position: absolute;
-  top: 20%;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-}
-
-.dialog-content {
-  background: linear-gradient(
-    165deg,
-    var(--game-parchment) 0%,
-    var(--game-parchment-mid) 45%,
-    var(--game-parchment-dark) 100%
-  );
-  border: 4px solid var(--game-border-gold);
-  padding: 20px;
-  max-width: 600px;
-  max-height: 60vh;
-  text-align: center;
-  color: var(--game-parchment-ink);
-  font-family: var(--game-ui-font);
-  font-size: 18px;
-  box-shadow: var(--game-shadow-modal);
-  border-radius: 8px;
-  overflow-y: auto;
-  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.35);
-}
-
-.dialog-line {
-  line-height: 1.6;
-  margin-bottom: 10px;
-}
-
-.dialog-content button {
-  background: linear-gradient(to bottom, var(--game-honey), var(--game-honey-shadow));
-  border: 3px solid var(--game-wood-dark);
-  color: var(--game-wood-dark);
-  padding: 8px 16px;
-  font-size: 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: var(--game-ui-font);
-  font-weight: bold;
-  text-shadow: 0 1px 0 rgba(255, 248, 220, 0.35);
-  box-shadow: inset -4px -4px var(--game-honey-shadow),
-    inset 4px 4px var(--game-honey-light), var(--game-shadow-out);
-  transition: filter 0.2s, transform 0.1s;
-}
-
-.dialog-content button:hover {
-  filter: brightness(1.08);
-}
-
-.dialog-content button:active {
-  transform: scale(0.97);
-  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
+  background: #000;
 }
 </style>
