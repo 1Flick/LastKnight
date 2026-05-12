@@ -119,8 +119,12 @@ const bjornImage = ref(bjornParado);
 
 const weapons = computed(() =>
   Object.values(ITEMS)
-    .filter(item => item.type === 'Arma' && item.price !== undefined)
-    .map(item => ({ ...item, itemId: item.id }))
+    .filter((item) => {
+      if (item.type !== 'Arma' || item.price === undefined) return false;
+      if (!item.allowedClasses?.length) return true;
+      return item.allowedClasses.includes(gameState.player.classe);
+    })
+    .map((item) => ({ ...item, itemId: item.id }))
 );
 
 const typeLine = (text) => {

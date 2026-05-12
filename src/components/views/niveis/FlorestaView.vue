@@ -6,13 +6,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, onBeforeMount } from 'vue'
+import { ref, onMounted, onUnmounted, onBeforeMount, watch } from 'vue'
 import { useGameState } from '@/stores/gameState'
 import HUD from '@/components/HUD.vue'
 import { createFrameGate } from '@/utils/fpsLoop'
+import { usePlayerSprite } from '@/composables/usePlayerSprite'
 
 let nextGameFrame = createFrameGate()
 const gameState = useGameState()
+const { spriteUrl } = usePlayerSprite()
 
 const canvasRef = ref(null)
 let ctx = null
@@ -277,7 +279,11 @@ onMounted(() => {
   if (!ctx) return
 
   backgroundImage.src = '/img/Floresta/floresta-bg.jpg'
-  playerSpriteSheet.src = '/img/sprites/player/player_sprite.png'
+  playerSpriteSheet.src = spriteUrl.value
+
+  watch(spriteUrl, (nextUrl) => {
+    playerSpriteSheet.src = nextUrl
+  })
 
   backgroundImage.onload = tryStartLoop
   backgroundImage.onerror = () => {

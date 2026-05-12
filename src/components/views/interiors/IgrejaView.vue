@@ -130,10 +130,17 @@ import { useGameState } from '@/stores/gameState.js'
 import { createFrameGate } from '@/utils/fpsLoop'
 import bgImage from '@/assets/interior/igreja-bg.png'
 import padreSprite from '@/assets/Padre.png'
+import { usePlayerSprite } from '@/composables/usePlayerSprite'
+
+const { spriteUrl } = usePlayerSprite()
 
 // Configurações do jogador e sprite sheet
 const playerSpriteSheet = new Image()
-playerSpriteSheet.src = '/img/sprites/player/player_sprite.png'
+playerSpriteSheet.src = spriteUrl.value
+
+watch(spriteUrl, (nextUrl) => {
+  playerSpriteSheet.src = nextUrl
+})
 
 const player = {
   size: 250,

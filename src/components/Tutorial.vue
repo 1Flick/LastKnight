@@ -104,11 +104,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { playAudio } from '@/utils/audioManager.js';
 import { createFrameGate } from '@/utils/fpsLoop';
+import { usePlayerSprite } from '@/composables/usePlayerSprite';
 
 const nextBattleFrame = createFrameGate();
 
-// Sprite sheet for player
-import playerSprite from '/img/sprites/player/player_sprite.png';
+const { spriteUrl: playerSprite } = usePlayerSprite();
 
 // Audio files
 import attackEffectSpritePlayer from '@/assets/sprites/ataque-efeito.png';

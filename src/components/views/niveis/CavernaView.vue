@@ -135,7 +135,7 @@
           </div>
 
           <!-- Projectile Effect -->
-          <div v-if="projectile.active" class="projectile-effect" :style="projectile.style"></div>
+          <div v-if="projectile.active" class="projectile-effect" :class="`projectile-effect--${projectile.kind}`" :style="projectile.style"></div>
         </div>
 
         <!-- Battle Log and Actions -->
@@ -172,6 +172,7 @@ import { useRouter } from 'vue-router';
 import { useGameState, ITEMS } from '@/stores/gameState.js';
 import { playAudio } from '@/utils/audioManager.js';
 import { createFrameGate } from '@/utils/fpsLoop';
+import { usePlayerSprite } from '@/composables/usePlayerSprite';
 
 const nextBattleFrame = createFrameGate();
 
@@ -184,7 +185,7 @@ import attackEffectSpritePlayer from '@/assets/sprites/ataque-efeito.png';
 import attackEffectSpriteDragon from '@/assets/sprites/ataque-dragao.png';
 
 // Player Sprite Sheet
-const playerSprite = new URL('/img/sprites/player/player_sprite.png', import.meta.url).href;
+const { spriteUrl: playerSprite } = usePlayerSprite();
 
 // Animation Variables
 const currentFrame = ref(0);
@@ -337,7 +338,7 @@ const gameOver = ref(false);
 const victory = ref(false);
 const damagePopup = reactive({ active: false, value: 0, top: 0, left: 0, type: 'enemy-damage', prefix: '-' });
 const attackEffect = reactive({ active: false, style: {}, sprite: null });
-const projectile = reactive({ active: false, style: {} });
+const projectile = reactive({ active: false, style: {}, kind: 'arrow' });
 
 // Computed Properties
 const potionCount = computed(() => gameState.getItemQuantity('potion_health'));
@@ -430,11 +431,12 @@ const showAttackEffect = async (attackerElement, targetElement, isPlayer = true)
   }
 };
 
-const showProjectile = async (attackerElement, targetElement) => {
+const showProjectile = async (attackerElement, targetElement, kind = 'arrow') => {
   try {
     const startRect = attackerElement.getBoundingClientRect();
     const endRect = targetElement.getBoundingClientRect();
     const containerRect = document.querySelector('.battle-arena').getBoundingClientRect();
+    projectile.kind = kind;
     projectile.active = true;
     projectile.style = {
       top: `${startRect.top - containerRect.top + startRect.height / 2}px`,
@@ -574,11 +576,15 @@ const attackEnemy = async () => {
   addLogMessage(`⚔️ ${attackResult.message}`);
   playAudio('attack', { volume: 0.3 });
 
-  const originalLeft = playerCharacter.left;
-  playerCharacter.left += 40;
-  await sleep(200);
-  await showAttackEffect(playerElement, enemyElement, true);
-  playerCharacter.left = originalLeft;
+  if (attackResult.attackType === 'ranged') {
+    await showProjectile(playerElement, enemyElement, attackResult.projectileKind);
+  } else {
+    const originalLeft = playerCharacter.left;
+    playerCharacter.left += 40;
+    await sleep(200);
+    await showAttackEffect(playerElement, enemyElement, true);
+    playerCharacter.left = originalLeft;
+  }
 
   damagedEnemy.value = enemyIndex;
   const damageDealt = attackResult.damage || 0;
@@ -1341,10 +1347,18 @@ onUnmounted(() => {
   pointer-events: none;
   width: 20px;
   height: 20px;
-  background: radial-gradient(circle, #ff4500 30%, #ff8c00 60%, transparent 80%);
   border-radius: 50%;
-  box-shadow: 0 0 15px #ff4500, 0 0 25px #ff8c00;
   animation: pulseProjectile 0.5s infinite alternate;
+}
+
+.projectile-effect--arrow {
+  background: radial-gradient(circle, #d8c08a 30%, #8b6914 70%, transparent 85%);
+  box-shadow: 0 0 12px #c9a227;
+}
+
+.projectile-effect--arcane {
+  background: radial-gradient(circle, #d8ccff 30%, #6b5ce7 65%, transparent 85%);
+  box-shadow: 0 0 14px #8f7cff, 0 0 24px #6b5ce7;
 }
 
 @keyframes pulseProjectile {

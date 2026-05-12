@@ -16,12 +16,14 @@ import { useRouter } from 'vue-router'
 import { useGameState } from '@/stores/gameState'
 import HUD from '@/components/HUD.vue'
 import { createFrameGate } from '@/utils/fpsLoop'
+import { usePlayerSprite } from '@/composables/usePlayerSprite'
 
 /** Novo gate a cada entrada na rota — evita estado preso do ciclo anterior */
 let nextGameFrame = createFrameGate()
 
 const router = useRouter()
 const gameState = useGameState()
+const { spriteUrl } = usePlayerSprite()
 
 const maxStamina = gameState.player.maxStamina
 const staminaRecoveryRate = 10
@@ -238,7 +240,11 @@ function beginLoadingImages() {
     fg.src = FG_URLS[i]
   })
   loadImage(foreground, '/img/albadia/albadiaDetalhes.png')
-  loadImage(playerSpriteSheet, '/img/sprites/player/player_sprite.png')
+  loadImage(playerSpriteSheet, spriteUrl.value)
+
+  watch(spriteUrl, (nextUrl) => {
+    loadImage(playerSpriteSheet, nextUrl)
+  })
 }
 
 /** Vários ticks para layout estável após troca de rota (evita tela preta sem F5) */

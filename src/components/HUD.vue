@@ -402,7 +402,7 @@ const staminaRingOffset = computed(() => {
 .inventory-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(12, 8, 4, 0.72);
+  background: transparent;
   pointer-events: auto;
 }
 

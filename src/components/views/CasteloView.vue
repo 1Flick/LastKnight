@@ -132,11 +132,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useGameState } from '@/stores/gameState'
+import { useGameState, ITEMS } from '@/stores/gameState'
 import HUD from '@/components/HUD.vue'
 import { createFrameGate } from '@/utils/fpsLoop'
+import { usePlayerSprite } from '@/composables/usePlayerSprite'
 
 const nextGameFrame = createFrameGate()
+const { spriteUrl: spriteSheet } = usePlayerSprite()
 import bgImage from '@/assets/interior/bossroom.png'
 import fgImage from '@/assets/interior/bossroom_detalhes.png'
 
@@ -174,10 +176,6 @@ const bossLastDirection = ref('down')
 const isBossAttacking = ref(false)
 
 // Spritesheets
-const spriteSheet = new URL(
-  '/img/sprites/player/player_sprite.png',
-  import.meta.url
-).href
 const bossSpriteSheet = new URL(
   '/img/sprites/boss/magnus_sprite.png',
   import.meta.url
@@ -514,6 +512,13 @@ const checkEnemyCollision = (nextX, nextY) => {
 }
 
 const checkAttackHit = () => {
+  const weapon = ITEMS[gameState.player.equipment?.weapon];
+  if (weapon?.attackType === 'ranged') {
+    const dx = enemy.value.position.x - characterPosition.value.x;
+    const dy = enemy.value.position.y - characterPosition.value.y;
+    return Math.hypot(dx, dy) < 900;
+  }
+
   const playerAttackBox = {
     x:
       characterPosition.value.x +

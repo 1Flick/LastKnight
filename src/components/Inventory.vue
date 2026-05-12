@@ -11,7 +11,6 @@
     aria-labelledby="inventory-title"
     @click.stop
   >
-    <!-- Alça / barra superior (decoração mochila) -->
     <div class="backpack-strap backpack-strap--top" aria-hidden="true" />
     <div class="backpack-buckle backpack-buckle--left" aria-hidden="true" />
     <div class="backpack-buckle backpack-buckle--right" aria-hidden="true" />
@@ -27,7 +26,7 @@
       </div>
       <div class="title-wrap">
         <h2 id="inventory-title">Mochila</h2>
-        <span class="drag-hint">arraste para mover</span>
+        <span class="drag-hint">arraste a barra para mover</span>
       </div>
       <button
         type="button"
@@ -44,40 +43,83 @@
     <div class="backpack-inner">
       <div class="inner-stitch inner-stitch--top" aria-hidden="true" />
       <div class="inventory-content">
-        <transition-group name="item-fade" tag="div" class="grid-container">
-          <div
-            v-for="item in allItems"
-            :key="item.itemId"
-            class="item-card"
+        <div class="slot-grid" role="list" aria-label="Itens da mochila">
+          <button
+            v-for="(slot, index) in backpackSlots"
+            :key="`backpack-${index}`"
+            type="button"
+            class="inventory-slot"
             :class="{
-              clickable: item.usable || item.equipable,
-              equipped: item.equipped,
-              'low-quantity': item.quantity === 1 && item.usable,
-              selected: selectedItem?.itemId === item.itemId,
+              'inventory-slot--active': dragSource?.type === 'backpack' && dragSource.index === index,
+              'inventory-slot--target': dropTarget?.type === 'backpack' && dropTarget.index === index,
             }"
-            @click="handleClick(item)"
+            :aria-label="slotLabel(slot, index)"
+            @pointerdown="onSlotPointerDown('backpack', index, $event)"
+            @pointerenter="onSlotPointerEnter('backpack', index)"
+            @pointerup="onSlotPointerUp('backpack', index)"
+            @dblclick="onBackpackDoubleClick(index)"
           >
-            <div class="item-header">
-              <img :src="item.icon" :alt="item.name" class="item-icon" />
-              <div class="item-info">
-                <span class="item-name">{{ item.name }}</span>
-                <span v-if="item.quantity > 1" class="item-quantity">×{{ item.quantity }}</span>
-                <span v-if="item.equipped" class="equipped-tag">Equipado</span>
-              </div>
-            </div>
-            <div v-if="selectedItem?.itemId === item.itemId" class="item-details">
-              <p class="description">{{ item.description }}</p>
-              <p v-if="item.type" class="detail">Tipo: {{ item.type }}</p>
-              <p v-if="item.stats?.attack" class="detail">Dano: +{{ item.stats.attack }}</p>
-              <p v-if="item.stats?.defense" class="detail">Defesa: +{{ item.stats.defense }}</p>
-              <p v-if="item.stats?.speed" class="detail">
-                Velocidade: {{ item.stats.speed > 0 ? '+' : '' }}{{ item.stats.speed }}
-              </p>
-            </div>
-          </div>
-        </transition-group>
+            <img
+              v-if="slot"
+              :src="getItemIcon(slot.itemId)"
+              :alt="ITEMS[slot.itemId]?.name || slot.itemId"
+              class="slot-icon"
+              draggable="false"
+            />
+            <span v-if="slot && slot.quantity > 1" class="slot-qty">×{{ slot.quantity }}</span>
+          </button>
+        </div>
+
+        <div class="equipment-row" aria-label="Equipamento">
+          <button
+            v-for="equipment in equipmentSlots"
+            :key="equipment.id"
+            type="button"
+            class="inventory-slot inventory-slot--equipment"
+            :class="{
+              'inventory-slot--active': dragSource?.type === 'equipment' && dragSource.slot === equipment.id,
+              'inventory-slot--target': dropTarget?.type === 'equipment' && dropTarget.slot === equipment.id,
+            }"
+            :aria-label="equipmentLabel(equipment.id)"
+            @pointerdown="onSlotPointerDown('equipment', equipment.id, $event)"
+            @pointerenter="onSlotPointerEnter('equipment', equipment.id)"
+            @pointerup="onSlotPointerUp('equipment', equipment.id)"
+            @dblclick="onEquipmentDoubleClick(equipment.id)"
+          >
+            <span class="slot-caption">{{ equipment.label }}</span>
+            <img
+              v-if="equippedItem(equipment.id)"
+              :src="getItemIcon(equippedItem(equipment.id))"
+              :alt="ITEMS[equippedItem(equipment.id)]?.name || equipment.label"
+              class="slot-icon"
+              draggable="false"
+            />
+          </button>
+        </div>
+
+        <div v-if="selectedItemDetails" class="item-details">
+          <p class="item-details__name">{{ selectedItemDetails.name }}</p>
+          <p class="description">{{ selectedItemDetails.description }}</p>
+          <p v-if="selectedItemDetails.type" class="detail">Tipo: {{ selectedItemDetails.type }}</p>
+          <p v-if="selectedItemDetails.stats?.attack" class="detail">Dano: +{{ selectedItemDetails.stats.attack }}</p>
+          <p v-if="selectedItemDetails.stats?.defense" class="detail">Defesa: +{{ selectedItemDetails.stats.defense }}</p>
+          <p v-if="selectedItemDetails.stats?.speed" class="detail">
+            Velocidade: {{ selectedItemDetails.stats.speed > 0 ? '+' : '' }}{{ selectedItemDetails.stats.speed }}
+          </p>
+        </div>
+
         <p v-if="feedbackMessage" class="feedback-message game-ui-toast--banner">{{ feedbackMessage }}</p>
       </div>
+    </div>
+
+    <div
+      v-if="dragPreview"
+      class="drag-ghost"
+      :style="dragGhostStyle"
+      aria-hidden="true"
+    >
+      <img :src="dragPreview.icon" alt="" class="slot-icon" />
+      <span v-if="dragPreview.quantity > 1" class="slot-qty">×{{ dragPreview.quantity }}</span>
     </div>
   </div>
 </template>
@@ -87,68 +129,234 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useGameState, ITEMS } from '@/stores/gameState.js';
 
 const STORAGE_KEY = 'inventoryModalPos';
+const BACKPACK_SLOT_COUNT = 12;
 
 const emits = defineEmits(['update:show']);
 const gameState = useGameState();
 
 const feedbackMessage = ref('');
 const isClosing = ref(false);
-const selectedItem = ref(null);
 const inventoryModal = ref(null);
 const isDragging = ref(false);
+const dragSource = ref(null);
+const dropTarget = ref(null);
+const dragPreview = ref(null);
+const dragGhostPosition = ref({ x: 0, y: 0 });
+const selectedItemId = ref(null);
 
 const weaponEquipSound = new Audio('/sounds/equip.wav');
 const potionDrinkSound = new Audio('/sounds/potion_drink.wav');
 
 let dragOffsetX = 0;
 let dragOffsetY = 0;
+let itemDragActive = false;
 
-const getItemIcon = (itemId) => ITEMS[itemId]?.icon || '/assets/icons/unknown-item.png';
+const equipmentSlots = [
+  { id: 'weapon', label: 'Equipado' },
+  { id: 'armor', label: 'Armadura' },
+  { id: 'shield', label: 'Escudo' },
+];
 
-const allItems = computed(() => {
-  return gameState.player.inventory
-    .map((invItem) => {
-      const itemData = ITEMS[invItem.itemId];
-      if (!itemData) return null;
-
-      const slot = itemData.slot;
-
-      return {
-        itemId: invItem.itemId,
-        name: itemData.name,
-        icon: getItemIcon(invItem.itemId),
-        quantity: invItem.quantity,
-        description: itemData.description,
-        type: itemData.type === 'Armadura' ? 'Armadura' : itemData.type,
-        usable: ['Consumível', 'Consumível Especial'].includes(itemData.type),
-        equipable: slot === 'weapon' || slot === 'armor',
-        equipped: gameState.player.equipment[slot] === invItem.itemId,
-        stats: itemData.stats,
-        action: slot
-          ? () => {
-              if (gameState.player.equipment[slot] === invItem.itemId) {
-                gameState.unequipItem(slot);
-              } else {
-                gameState.equipItem(invItem.itemId);
-                if (slot === 'weapon' || slot === 'armor') {
-                  weaponEquipSound.currentTime = 0;
-                  weaponEquipSound.play().catch(() => {});
-                }
-              }
-              selectedItem.value = null;
-            }
-          : itemData.type.startsWith('Consumível')
-            ? () => {
-                gameState.useItem(invItem.itemId);
-                potionDrinkSound.currentTime = 0;
-                potionDrinkSound.play().catch(() => {});
-                selectedItem.value = null;
-              }
-            : null,
-      };
-    })
-    .filter(Boolean);
+const backpackSlots = computed(() => {
+  const slots = gameState.player.backpackSlots;
+  if (Array.isArray(slots) && slots.length === BACKPACK_SLOT_COUNT) {
+    return slots;
+  }
+  return Array.from({ length: BACKPACK_SLOT_COUNT }, () => null);
 });
+
+const dragGhostStyle = computed(() => ({
+  left: `${dragGhostPosition.value.x}px`,
+  top: `${dragGhostPosition.value.y}px`,
+}));
+
+const selectedItemDetails = computed(() => {
+  if (!selectedItemId.value || !ITEMS[selectedItemId.value]) return null;
+  const item = ITEMS[selectedItemId.value];
+  return {
+    name: item.name,
+    description: item.description,
+    type: item.type,
+    stats: item.stats,
+  };
+});
+
+const getItemIcon = (itemId) => ITEMS[itemId]?.icon || '/icons/default-item.png';
+
+function equippedItem(slot) {
+  return gameState.player.equipment?.[slot] || null;
+}
+
+function slotLabel(slot, index) {
+  if (!slot) return `Slot vazio ${index + 1}`;
+  return `${ITEMS[slot.itemId]?.name || slot.itemId}, quantidade ${slot.quantity}`;
+}
+
+function equipmentLabel(slot) {
+  const itemId = equippedItem(slot);
+  if (!itemId) {
+    if (slot === 'weapon') return 'Slot de arma vazio';
+    if (slot === 'armor') return 'Slot de armadura vazio';
+    return 'Slot de escudo vazio';
+  }
+  return `${ITEMS[itemId]?.name || itemId} equipado`;
+}
+
+function showFeedback(message) {
+  feedbackMessage.value = message;
+  window.setTimeout(() => {
+    feedbackMessage.value = '';
+  }, 2800);
+}
+
+function onSlotPointerDown(type, indexOrSlot, event) {
+  if (event.button != null && event.button !== 0) return;
+
+  const payload =
+    type === 'backpack'
+      ? { type, index: indexOrSlot, slot: backpackSlots.value[indexOrSlot] }
+      : { type, slot: indexOrSlot, itemId: equippedItem(indexOrSlot) };
+
+  if (type === 'backpack' && !payload.slot) {
+    selectedItemId.value = null;
+    return;
+  }
+  if (type === 'equipment' && !payload.itemId) {
+    selectedItemId.value = null;
+    return;
+  }
+
+  dragSource.value = payload;
+  itemDragActive = true;
+  dropTarget.value = null;
+  dragPreview.value = {
+    icon: getItemIcon(type === 'backpack' ? payload.slot.itemId : payload.itemId),
+    quantity: type === 'backpack' ? payload.slot.quantity : 1,
+  };
+  dragGhostPosition.value = { x: event.clientX - 24, y: event.clientY - 24 };
+  selectedItemId.value = type === 'backpack' ? payload.slot.itemId : payload.itemId;
+
+  document.addEventListener('pointermove', onItemPointerMove);
+  document.addEventListener('pointerup', onItemPointerUp);
+  event.preventDefault();
+}
+
+function onSlotPointerEnter(type, indexOrSlot) {
+  if (!itemDragActive) return;
+  dropTarget.value = type === 'backpack' ? { type, index: indexOrSlot } : { type, slot: indexOrSlot };
+}
+
+function onSlotPointerUp(type, indexOrSlot) {
+  if (!itemDragActive) return;
+  dropTarget.value = type === 'backpack' ? { type, index: indexOrSlot } : { type, slot: indexOrSlot };
+  commitDrag();
+}
+
+function onItemPointerMove(event) {
+  if (!itemDragActive) return;
+  dragGhostPosition.value = { x: event.clientX - 24, y: event.clientY - 24 };
+}
+
+function onItemPointerUp() {
+  if (!itemDragActive) return;
+  commitDrag();
+}
+
+function resetItemDrag() {
+  itemDragActive = false;
+  dragSource.value = null;
+  dropTarget.value = null;
+  dragPreview.value = null;
+  document.removeEventListener('pointermove', onItemPointerMove);
+  document.removeEventListener('pointerup', onItemPointerUp);
+}
+
+function commitDrag() {
+  const source = dragSource.value;
+  const target = dropTarget.value;
+  resetItemDrag();
+  if (!source || !target) return;
+
+  if (source.type === 'backpack' && target.type === 'backpack') {
+    if (source.index !== target.index) {
+      gameState.moveBackpackSlot(source.index, target.index);
+      showFeedback('Itens reorganizados na mochila.');
+    }
+    return;
+  }
+
+  if (source.type === 'backpack' && target.type === 'equipment') {
+    const itemId = backpackSlots.value[source.index]?.itemId;
+    const itemData = ITEMS[itemId];
+    if (!itemData || itemData.slot !== target.slot) {
+      showFeedback('Este item não pode ser equipado neste slot.');
+      return;
+    }
+    if (gameState.equipFromBackpackSlot(source.index)) {
+      weaponEquipSound.currentTime = 0;
+      weaponEquipSound.play().catch(() => {});
+      showFeedback(`${itemData.name} equipado.`);
+    }
+    return;
+  }
+
+  if (source.type === 'equipment' && target.type === 'backpack') {
+    if (gameState.unequipToBackpackSlot(source.slot, target.index)) {
+      showFeedback('Item guardado na mochila.');
+    } else {
+      showFeedback('Não há espaço livre na mochila.');
+    }
+    return;
+  }
+
+  if (source.type === 'equipment' && target.type === 'equipment') {
+    const fromItem = equippedItem(source.slot);
+    const toItem = equippedItem(target.slot);
+    if (!fromItem) return;
+    if (toItem && ITEMS[toItem]?.slot !== source.slot) return;
+    if (ITEMS[fromItem]?.slot !== target.slot) {
+      showFeedback('Este item não pertence a esse slot.');
+      return;
+    }
+    gameState.player.equipment[source.slot] = toItem || null;
+    gameState.player.equipment[target.slot] = fromItem;
+    gameState.recalculateStats();
+    gameState.saveState();
+    showFeedback('Equipamento reorganizado.');
+  }
+}
+
+function onBackpackDoubleClick(index) {
+  const slot = backpackSlots.value[index];
+  if (!slot) return;
+  const itemData = ITEMS[slot.itemId];
+  if (!itemData) return;
+
+  if (itemData.slot) {
+    if (gameState.equipFromBackpackSlot(index)) {
+      weaponEquipSound.currentTime = 0;
+      weaponEquipSound.play().catch(() => {});
+      showFeedback(`${itemData.name} equipado.`);
+    }
+    return;
+  }
+
+  if (['Consumível', 'Consumível Especial'].includes(itemData.type)) {
+    if (gameState.useItem(slot.itemId)) {
+      potionDrinkSound.currentTime = 0;
+      potionDrinkSound.play().catch(() => {});
+      showFeedback(`Você usou ${itemData.name}.`);
+    }
+  }
+}
+
+function onEquipmentDoubleClick(slot) {
+  if (gameState.unequipToBackpackSlot(slot)) {
+    showFeedback('Item desequipado.');
+  } else {
+    showFeedback('Não há espaço livre na mochila.');
+  }
+}
 
 function clampPosition(el) {
   if (!el) return;
@@ -169,8 +377,8 @@ function applyDefaultCenter(el) {
   if (!el) return;
   el.style.position = 'fixed';
   el.style.margin = '0';
-  const w = el.offsetWidth || 400;
-  const h = el.offsetHeight || 300;
+  const w = el.offsetWidth || 420;
+  const h = el.offsetHeight || 360;
   el.style.left = `${Math.max(8, Math.round((window.innerWidth - w) / 2))}px`;
   el.style.top = `${Math.max(8, Math.round((window.innerHeight - h) / 2))}px`;
   el.style.transform = 'none';
@@ -275,31 +483,11 @@ function onWindowResize() {
   if (el) clampPosition(el);
 }
 
-const handleClick = (item) => {
-  feedbackMessage.value = '';
-  if (selectedItem.value?.itemId === item.itemId) {
-    selectedItem.value = null;
-  } else {
-    selectedItem.value = item;
-  }
-  if (item.usable && item.quantity > 0) {
-    item.action?.();
-    feedbackMessage.value = `Você usou ${item.name}!`;
-  } else if (item.equipable) {
-    const wasEquipped = item.equipped;
-    item.action?.();
-    feedbackMessage.value = wasEquipped ? `${item.name} desequipado!` : `${item.name} equipado!`;
-  } else {
-    feedbackMessage.value = `${item.name} não pode ser usado ou equipado.`;
-  }
-
-  setTimeout(() => (feedbackMessage.value = ''), 3000);
-};
-
 const handleClose = () => {
   if (isClosing.value) return;
   isClosing.value = true;
-  selectedItem.value = null;
+  selectedItemId.value = null;
+  resetItemDrag();
   const el = inventoryModal.value;
   if (el) savePosition(el);
   setTimeout(() => emits('update:show', false), 280);
@@ -318,6 +506,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   onDragPointerUp();
+  resetItemDrag();
   if (inventoryModal.value) savePosition(inventoryModal.value);
   window.removeEventListener('resize', onWindowResize);
   weaponEquipSound.pause();
@@ -353,7 +542,6 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ——— Mochila / couro ——— */
 .backpack-bag {
   pointer-events: auto;
   position: fixed;
@@ -361,24 +549,16 @@ onBeforeUnmount(() => {
   top: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
-  width: min(400px, calc(100vw - 20px));
-  max-height: min(56vh, 540px);
+  width: min(430px, calc(100vw - 20px));
+  max-height: min(72vh, 620px);
   padding: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   overflow: visible;
   font-family: var(--game-ui-font);
-
-  /* Couro externo */
   background:
-    linear-gradient(
-      168deg,
-      rgba(110, 72, 48, 0.98) 0%,
-      #4a3020 28%,
-      #2e1e14 65%,
-      #1f140e 100%
-    );
+    linear-gradient(168deg, rgba(110, 72, 48, 0.98) 0%, #4a3020 28%, #2e1e14 65%, #1f140e 100%);
   border-radius: 14px 14px 22px 22px;
   border: 5px solid #1a100a;
   box-shadow:
@@ -458,12 +638,7 @@ onBeforeUnmount(() => {
   margin: 8px 8px 0;
   cursor: grab;
   border-radius: 10px 10px 4px 4px;
-  background: linear-gradient(
-    175deg,
-    rgba(130, 88, 58, 0.95) 0%,
-    rgba(72, 48, 34, 0.98) 55%,
-    rgba(45, 30, 22, 1) 100%
-  );
+  background: linear-gradient(175deg, rgba(130, 88, 58, 0.95) 0%, rgba(72, 48, 34, 0.98) 55%, rgba(45, 30, 22, 1) 100%);
   border: 3px solid rgba(25, 15, 10, 0.9);
   border-bottom: 4px double rgba(20, 12, 8, 0.85);
   box-shadow:
@@ -532,40 +707,18 @@ onBeforeUnmount(() => {
   box-shadow:
     inset 0 2px 0 rgba(255, 200, 140, 0.15),
     0 2px 6px rgba(0, 0, 0, 0.45);
-  transition: transform 0.12s ease, filter 0.15s ease;
 }
 
-.close-btn:hover {
-  filter: brightness(1.12);
-}
-
-.close-btn:active {
-  transform: translateY(1px);
-}
-
-/* Bolso interno (tecido / pergaminho envelhecido) */
 .backpack-inner {
   position: relative;
   z-index: 1;
   flex: 1;
   min-height: 0;
   margin: 0 10px 10px;
-  padding: 0;
   border-radius: 6px 6px 16px 16px;
   background:
-    repeating-linear-gradient(
-      -12deg,
-      transparent,
-      transparent 3px,
-      rgba(40, 26, 18, 0.06) 3px,
-      rgba(40, 26, 18, 0.06) 4px
-    ),
-    linear-gradient(
-      165deg,
-      #c9a888 0%,
-      #a67c52 35%,
-      #8b6344 100%
-    );
+    repeating-linear-gradient(-12deg, transparent, transparent 3px, rgba(40, 26, 18, 0.06) 3px, rgba(40, 26, 18, 0.06) 4px),
+    linear-gradient(165deg, #c9a888 0%, #a67c52 35%, #8b6344 100%);
   border: 3px solid rgba(35, 22, 14, 0.85);
   box-shadow:
     inset 0 4px 12px rgba(0, 0, 0, 0.35),
@@ -579,193 +732,125 @@ onBeforeUnmount(() => {
 }
 
 .inventory-content {
-  flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px 10px 12px;
-  overflow: hidden;
+  gap: 12px;
+  padding: 12px;
 }
 
-.grid-container {
+.slot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px 2px;
-  flex: 1;
-  min-height: 0;
 }
 
-.grid-container::-webkit-scrollbar {
-  width: 8px;
+.equipment-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 2px dashed rgba(45, 28, 18, 0.45);
 }
 
-.grid-container::-webkit-scrollbar-track {
-  background: rgba(45, 28, 18, 0.35);
-  border-radius: 4px;
-}
-
-.grid-container::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #6b4832, #3d2818);
-  border-radius: 4px;
-  border: 1px solid #2a1a10;
-}
-
-.item-card {
-  padding: 8px;
-  border: 2px solid rgba(45, 28, 18, 0.65);
+.inventory-slot {
+  position: relative;
+  aspect-ratio: 1;
+  min-height: 68px;
   border-radius: 8px;
-  background: rgba(255, 248, 235, 0.72);
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  cursor: default;
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
+  border: 2px solid rgba(45, 28, 18, 0.75);
+  background:
+    linear-gradient(180deg, rgba(255, 248, 235, 0.82) 0%, rgba(214, 184, 148, 0.72) 100%);
   box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.35);
+  cursor: grab;
+  padding: 6px;
 }
 
-.item-card:hover,
-.item-card.selected {
+.inventory-slot--equipment {
+  min-height: 78px;
+}
+
+.inventory-slot--active,
+.inventory-slot--target {
   border-color: var(--game-border-gold);
   box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.2),
+    0 0 0 1px rgba(201, 162, 39, 0.45),
     inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
-.item-card.clickable {
-  cursor: pointer;
+.slot-caption {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(44, 24, 16, 0.72);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.item-card.equipped {
-  border-color: #c9a227;
-  box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.45);
-}
-
-.item-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+.slot-icon {
   width: 100%;
-}
-
-.item-icon {
-  width: clamp(38px, 9vmin, 50px);
-  height: clamp(38px, 9vmin, 50px);
+  height: 100%;
   object-fit: contain;
   image-rendering: pixelated;
-  border: 2px solid rgba(60, 38, 24, 0.55);
+}
+
+.slot-qty {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  padding: 1px 5px;
   border-radius: 6px;
-  padding: 2px;
-  background: rgba(255, 255, 255, 0.45);
-  flex-shrink: 0;
-}
-
-.item-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.item-name {
-  font-size: clamp(12px, 2.8vmin, 15px);
-  color: #2c1810;
+  background: rgba(26, 15, 7, 0.82);
+  color: #f5e6c8;
+  font-size: 11px;
   font-weight: 800;
-  line-height: 1.2;
-  word-break: break-word;
-}
-
-.item-quantity {
-  font-size: clamp(10px, 2.4vmin, 13px);
-  color: #3d2618;
-  font-weight: 700;
-}
-
-.equipped-tag {
-  font-size: clamp(9px, 2.1vmin, 11px);
-  color: #3d2618;
-  font-weight: 800;
-  background: rgba(201, 162, 39, 0.45);
-  padding: 2px 6px;
-  border-radius: 4px;
-  align-self: flex-start;
 }
 
 .item-details {
-  margin-top: 8px;
-  padding: 8px;
-  background: rgba(44, 24, 16, 0.1);
-  border-radius: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(44, 24, 16, 0.12);
   border: 1px solid rgba(80, 50, 35, 0.35);
-  max-height: 110px;
-  overflow-y: auto;
 }
 
-.description {
+.item-details__name {
   margin: 0 0 6px;
-  font-size: clamp(10px, 2.5vmin, 13px);
-  line-height: 1.45;
+  font-size: 15px;
+  font-weight: 800;
   color: #2c1810;
 }
 
+.description,
 .detail {
-  font-size: clamp(10px, 2.4vmin, 12px);
-  margin: 2px 0;
-  font-weight: 700;
-  color: #3d2618;
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #2c1810;
 }
 
 .feedback-message {
-  flex-shrink: 0;
-  margin-top: 8px;
+  margin: 0;
   padding: 8px 10px;
   text-align: center;
   font-size: clamp(11px, 2.6vmin, 14px);
-  animation: fadeInOut 3s ease forwards;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 10060;
+  width: 52px;
+  height: 52px;
   pointer-events: none;
+  border-radius: 8px;
+  border: 2px solid var(--game-border-gold);
+  background: rgba(255, 248, 235, 0.92);
+  box-shadow: var(--game-shadow-out);
+  padding: 4px;
 }
 
-@keyframes fadeInOut {
-  0% {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  12% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  88% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-}
-
-.item-fade-enter-active,
-.item-fade-leave-active {
-  transition: all 0.25s ease;
-}
-
-.item-fade-enter-from,
-.item-fade-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-@media (max-width: 360px) {
-  .grid-container {
-    grid-template-columns: 1fr;
-  }
-
-  .drag-hint {
-    display: none;
+@media (max-width: 420px) {
+  .slot-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 </style>
